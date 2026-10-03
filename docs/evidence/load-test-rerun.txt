@@ -1,0 +1,39 @@
+Independent re-run of the load tests during the final audit (same machine, same day, same method as load-test.txt,
+after the audit fixes were applied). Purpose: check that the first results reproduce.
+
+### Run 1: MOCK_LATENCY_SECONDS=1, via nginx, 3 replicas (60 slots), 600 requests, concurrency 100
+requests=600 concurrency=100 duration=11.38s
+throughput=52.7 req/s
+status codes: {200: 600}
+latency ms: mean=1665.8 p50=1853.0 p95=2197.8 p99=2342.9 max=3081.6
+requests per replica: {'fbf9ff38ae3f': 199, '37a2036c6a14': 205, '25806181d8c9': 196}
+nginx access log: n=600 status={'200': 600} request_time_s p50=1.662 p95=2.009 p99=2.053 max=2.642
+
+### Run 2: MOCK_LATENCY_SECONDS=1, ONE replica directly (20 slots), 300 requests, concurrency 100
+requests=300 concurrency=100 duration=15.72s
+throughput=19.1 req/s
+status codes: {200: 300}
+latency ms: mean=4478.3 p50=5010.1 p95=5299.6 p99=5554.4 max=5584.2
+requests per replica: {'25806181d8c9': 300}
+
+### Run 3: MOCK_LATENCY_SECONDS=1, ONE replica directly, 600 requests, concurrency 300 (load shedding expected)
+requests=600 concurrency=300 duration=16.06s
+throughput=37.3 req/s
+status codes: {200: 300, 503: 300}
+latency ms: mean=6328.4 p50=6154.3 p95=9333.5 p99=9702.5 max=9790.6
+requests per replica: {'25806181d8c9': 600}
+
+### Run 4: MOCK_LATENCY_SECONDS=0, via nginx, 3 replicas, 3000 requests, concurrency 50
+requests=3000 concurrency=50 duration=26.81s
+throughput=111.9 req/s
+status codes: {200: 3000}
+latency ms: mean=444.0 p50=298.4 p95=1393.0 p99=2147.8 max=4181.4
+requests per replica: {'2e047bc119c9': 1000, 'd46349404375': 994, 'b117bcb9acbc': 1006}
+nginx access log: n=3000 status={'200': 3000} request_time_s p50=0.026 p95=0.040 p99=0.077 max=0.277
+
+### Run 5: MOCK_LATENCY_SECONDS=0, ONE replica directly, 1500 requests, concurrency 50
+requests=1500 concurrency=50 duration=20.82s
+throughput=72.0 req/s
+status codes: {200: 1500}
+latency ms: mean=688.8 p50=647.6 p95=1202.0 p99=1565.3 max=2083.7
+requests per replica: {'b117bcb9acbc': 1500}

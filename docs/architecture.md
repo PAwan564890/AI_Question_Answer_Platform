@@ -174,7 +174,7 @@ RBAC answers "what may this role do". Its limit is that it cannot express rules 
 
 | Failure | Behaviour | Verified by |
 |---|---|---|
-| Redis down | `/chat` keeps working: limiter fails open with a per-process cap, cache bypassed. Login returns 503 (throttle fails closed). `/health` = `degraded`, `/health/ready` = 503 | Unit + API tests; live `docker compose stop redis` |
+| Redis down | `/chat` keeps working: limiter fails open with a per-process cap, cache bypassed. Login returns 503 (throttle fails closed). `/health` = `degraded`; `/health/ready` stays 200 so the load balancer keeps routing | Unit + API tests; live `docker compose stop redis` |
 | Qdrant down | Requests needing data return `503 DATABASE_UNAVAILABLE`; `/health` = `unhealthy` (503); `/health/live` stays 200 | API tests (patched client) |
 | LLM slow | Per-attempt timeout → bounded retries → `504 LLM_TIMEOUT` | Unit + API tests |
 | LLM 5xx / 429 | Backoff with jitter (honours `Retry-After`) → fallback provider if configured → `503` | Unit + API tests |

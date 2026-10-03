@@ -89,7 +89,8 @@ copy — a user would get N times the limit), server-side sessions in memory, or
   health checks (`max_fails=3 fail_timeout=10s`) and retry of a refused connection on the next
   replica. Requests that already reached a replica are not replayed (POST is not idempotent).
 * [PROPOSED] AWS Application Load Balancer: active health checks on `/health/ready`, so a
-  replica that lost Redis or Qdrant stops receiving traffic; **connection draining**
+  replica that cannot reach Qdrant stops receiving traffic (Redis does not gate readiness,
+  because chat is designed to survive a Redis outage); **connection draining**
   (deregistration delay) lets in-flight requests finish during deployments — the app cooperates
   through uvicorn's 30 s graceful shutdown; TLS termination; idle timeout above
   `LLM_OVERALL_DEADLINE_SECONDS`.
@@ -263,7 +264,7 @@ choice made here.
 | Component fails | Effect today (Compose) | Production answer [PROPOSED] |
 |---|---|---|
 | One API replica | nginx routes around it; Docker restarts it | ALB health check + orchestrator replaces the task; ≥ 2 AZs |
-| Redis | Chat continues without cache/shared limits; login refused; `/health/ready` fails | ElastiCache Multi-AZ failover (typically well under a few minutes); counters and cache are disposable, so data loss is acceptable (RPO: not applicable) |
+| Redis | Chat continues without cache/shared limits; login refused; replicas stay in rotation | ElastiCache Multi-AZ failover (typically well under a few minutes); counters and cache are disposable, so data loss is acceptable (RPO: not applicable) |
 | Qdrant | Data-dependent endpoints return 503 | Replication factor ≥ 2 across AZs; scheduled snapshots to S3. RPO = snapshot interval for a full loss; RTO = time to restore a snapshot — both to be measured in a restore drill |
 | LLM provider | Retries → fallback → breaker → fast 503 | Second provider or key; queue for non-interactive work |
 | Whole host / AZ | Outage (single host) | Multi-AZ; infrastructure as code to rebuild |

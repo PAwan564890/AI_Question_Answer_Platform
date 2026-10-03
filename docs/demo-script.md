@@ -38,12 +38,13 @@ foreach ($pair in @(@('demo_user', 'USER'), @('demo_reader', 'READ_ONLY'))) {
 $reader = Get-Token 'demo_reader' $demoPw
 
 # 4. Request bodies (ASCII so that no byte-order mark breaks the JSON)
-New-Item -ItemType Directory -Force "$env:TEMP\demo" | Out-Null
-Set-Location "$env:TEMP\demo"
-'{"question": "What is a circuit breaker?"}'              | Set-Content -Encoding ascii hi.json
-'{"question": "Which port does the zephyr protocol use?"}' | Set-Content -Encoding ascii q.json
+#    Stay in the repository folder: the docker compose commands below need it.
+$d = "$env:TEMP\demo"
+New-Item -ItemType Directory -Force $d | Out-Null
+'{"question": "What is a circuit breaker?"}'              | Set-Content -Encoding ascii "$d\hi.json"
+'{"question": "Which port does the zephyr protocol use?"}' | Set-Content -Encoding ascii "$d\q.json"
 '{"title": "Zephyr protocol note", "text": "The zephyr protocol uses port 4242 for telemetry uploads.", "source": "demo"}' |
-    Set-Content -Encoding ascii doc.json
+    Set-Content -Encoding ascii "$d\doc.json"
 Clear-Host
 ```
 
@@ -51,7 +52,7 @@ Notes:
 
 - If `demo_user` already exists from a rehearsal, account creation returns 409 and the old password applies. Use fresh names (for example `demo_user2`) or reset the data with `docker compose down -v` and start again.
 - Wait at least 60 seconds after the last rehearsal so the rate-limit window of the demo user is empty.
-- Open two browser tabs: the architecture diagram (from the report, section 8.1) and `http://localhost:8000/docs`.
+- Open two browser tabs: the architecture diagram (`docs/architecture.md`, section 3, rendered on GitHub) and `http://localhost:8000/docs`.
 
 ---
 
@@ -65,7 +66,7 @@ Notes:
 
 ## 0:30–1:15 Architecture, stack, implemented versus proposed
 
-**On screen:** The Mermaid diagram of the Compose topology (report section 8.1). Point at each box as it is named.
+**On screen:** The Mermaid diagram of the Compose topology (`docs/architecture.md`, section 3). Point at each box as it is named.
 
 **Say:**
 
@@ -88,7 +89,7 @@ curl.exe -s -i $base/health/ready
 
 **Say:**
 
-> The stack is already running. Docker Compose shows nginx, three application containers, Qdrant and Redis. The init job has finished: it created the collections and seeded the first admin from environment variables. Only nginx publishes a port. This is the Swagger page that FastAPI generates from the same models that validate requests. I call the health endpoint. The database and Redis are fine, the model is the mock, and the embedder is the offline hash embedder. There are three health endpoints for three questions. Liveness asks whether the process is running. Readiness asks whether it should receive traffic, and it fails when Qdrant or Redis is unreachable. Health is the summary for a person. When I stopped Redis in testing, health reported degraded, readiness returned 503, and liveness stayed 200.
+> The stack is already running. Docker Compose shows nginx, three application containers, Qdrant and Redis. The init job has finished: it created the collections and seeded the first admin from environment variables. Only nginx publishes a port. This is the Swagger page that FastAPI generates from the same models that validate requests. I call the health endpoint. The database and Redis are fine, the model is the mock, and the embedder is the offline hash embedder. There are three health endpoints for three questions. Liveness asks whether the process is running. Readiness asks whether it should receive traffic, and it fails when the database is unreachable. Health is the summary for a person. When I stopped Redis in testing, health reported degraded, but chat kept working and the replicas stayed in rotation.
 
 ## 2:15–3:00 Login, chat, 403 and 401
 
@@ -98,11 +99,11 @@ curl.exe -s -i $base/health/ready
 $user = Get-Token 'demo_user' $demoPw
 curl.exe -s -H "Authorization: Bearer $user" $base/auth/me
 
-curl.exe -s -H "Authorization: Bearer $user" -H "Content-Type: application/json" -d "@hi.json" $base/chat
+curl.exe -s -H "Authorization: Bearer $user" -H "Content-Type: application/json" -d "@$d\hi.json" $base/chat
 
-curl.exe -s -i -H "Authorization: Bearer $reader" -H "Content-Type: application/json" -d "@hi.json" $base/chat
+curl.exe -s -i -H "Authorization: Bearer $reader" -H "Content-Type: application/json" -d "@$d\hi.json" $base/chat
 
-curl.exe -s -i -H "Content-Type: application/json" -d "@hi.json" $base/chat
+curl.exe -s -i -H "Content-Type: application/json" -d "@$d\hi.json" $base/chat
 ```
 
 Point at: `"role":"USER"`; the `[mock]` answer with `usage` and `latency_ms`; `HTTP/1.1 403` with code `FORBIDDEN`; `HTTP/1.1 401` with code `UNAUTHENTICATED`.
@@ -117,21 +118,21 @@ Point at: `"role":"USER"`; the `[mock]` answer with `usage` and `latency_ms`; `H
 
 ```powershell
 # ingest as ADMIN
-curl.exe -s -H "Authorization: Bearer $admin" -H "Content-Type: application/json" -d "@doc.json" $base/documents
+curl.exe -s -H "Authorization: Bearer $admin" -H "Content-Type: application/json" -d "@$d\doc.json" $base/documents
 
 # grounded answer with sources, then the same question again (cache)
-curl.exe -s -H "Authorization: Bearer $user" -H "Content-Type: application/json" -d "@q.json" $base/chat
-curl.exe -s -H "Authorization: Bearer $user" -H "Content-Type: application/json" -d "@q.json" $base/chat
+curl.exe -s -H "Authorization: Bearer $user" -H "Content-Type: application/json" -d "@$d\q.json" $base/chat
+curl.exe -s -H "Authorization: Bearer $user" -H "Content-Type: application/json" -d "@$d\q.json" $base/chat
 
 # rate limit: keep asking until the shared limiter answers 429
-1..21 | ForEach-Object { curl.exe -s -o NUL -w "%{http_code} " -H "Authorization: Bearer $user" -H "Content-Type: application/json" -d "@q.json" $base/chat }
+1..21 | ForEach-Object { curl.exe -s -o NUL -w "%{http_code} " -H "Authorization: Bearer $user" -H "Content-Type: application/json" -d "@$d\q.json" $base/chat }
 
 # history (stored in Qdrant) and metrics (ADMIN only)
 curl.exe -s -H "Authorization: Bearer $user" "$base/chat/history?limit=2"
 curl.exe -s -H "Authorization: Bearer $admin" $base/metrics | Select-String "^cache_requests_total|^rate_limit_events_total|^llm_requests_total"
 ```
 
-Point at: `chunk_count` in the ingest response; `4242` and the `sources` list in the first answer; `"cached":true` in the second; the run of `200` followed by `429`; `"cached":true` in a history item; the three counters.
+Point at: `chunk_count` in the ingest response; `4242` and the `sources` list in the first answer; `"cached":true` in the second; the run of `200` followed by `429` (the limit is 20 per minute and three calls were already made, so the 18th call in the loop is the first 429); `"cached":true` in a history item; the three counters.
 
 If a counter shows zero, run the metrics command again: nginx sends each scrape to one replica, and counters are per replica.
 
@@ -148,15 +149,15 @@ If a counter shows zero, run the metrics command again: nginx sends each scrape 
 docker compose exec app id -u
 ```
 
-Point at the three different `X-Served-By` values and at `10001`. Then show the proposed AWS diagram (report section 20.6) and the load-test table (report section 25.2).
+Point at the three different `X-Served-By` values and at `10001`. Then show the proposed AWS diagram (`docs/scaling-analysis.md`, section 13) and the load-test table (same file, section 12).
 
 **Say:**
 
-> Each response names the replica that served it. Six calls show three different containers, and they run as a non-root user. Because the replicas are stateless, the path from one EC2 instance is to move Redis and Qdrant out, put a load balancer in front, and run the same image on ECS. That part is proposed, not built. What I measured is on my laptop with the mock model. With one second of simulated latency, three replicas gave about fifty-three requests per second, which matches the prediction of sixty slots. With zero latency I saw about one hundred and seven, but that is a lower bound because my load generator was the bottleneck. I did not test five hundred requests per second, and I never called a real model.
+> Each response names the replica that served it. Six calls show three different containers, and they run as a non-root user. Because the replicas are stateless, the path from one EC2 instance is to move Redis and Qdrant out, put a load balancer in front, and run the same image on ECS. That part is proposed, not built. What I measured is on my laptop with the mock model. With one second of simulated latency, three replicas gave about fifty-three requests per second, which matches the prediction of sixty slots. With zero latency I saw about one hundred and eighteen, but that is a lower bound because my load generator was the bottleneck. I did not test five hundred requests per second, and I never called a real model.
 
 ## 4:30–5:00 Decisions, limitations, future work
 
-**On screen:** The limitations list (report section 27), then the roadmap (section 28).
+**On screen:** The limitations list (`README.md`, section 16), then future improvements (section 17).
 
 **Say:**
 
@@ -183,7 +184,7 @@ Preparation
 - [ ] Docker Desktop is running; `docker compose ps` shows nginx, three `app` containers, Qdrant and Redis.
 - [ ] `python scripts/smoke_test.py` ends with `RESULT: ALL CHECKS PASSED`.
 - [ ] The "Before recording" block was run in the window being recorded: `$base`, `$admin`, `$reader`, `$demoPw` and `Get-Token` exist; `demo_user` and `demo_reader` exist.
-- [ ] The three JSON files exist in the current folder (`hi.json`, `q.json`, `doc.json`).
+- [ ] The three JSON files exist in `$d` (`hi.json`, `q.json`, `doc.json`) and the terminal is still in the repository folder.
 - [ ] At least 60 seconds have passed since the last `/chat` call by `demo_user`.
 - [ ] No "Zephyr protocol note" document is left from a rehearsal (otherwise two sources appear).
 

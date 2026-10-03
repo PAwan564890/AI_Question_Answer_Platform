@@ -44,8 +44,8 @@ All client input is untrusted: bodies, headers, tokens, and the text of ingested
 |---|---|
 | Attack | Token intercepted on the network, read from logs, or stolen from the client |
 | Likelihood / impact | Medium / High |
-| Implemented | 30-minute expiry. Signature, expiry and required claims verified with the algorithm pinned to HS256, so `alg=none` and algorithm-confusion tokens are rejected (tested). Tokens are never logged; a redaction filter masks bearer tokens and JWT-shaped strings. The user's active flag and role are re-read from the database on every request, so deactivating an account kills its tokens immediately (tested) |
-| Residual risk | A stolen token works until it expires or the account is deactivated. **No TLS in the local stack** — traffic is plain HTTP on localhost. One shared HS256 secret: every service that can verify can also sign |
+| Implemented | 30-minute expiry. Signature, expiry and required claims verified with the algorithm pinned to HS256, so `alg=none` and algorithm-confusion tokens are rejected (tested). Tokens are never logged; a redaction filter masks bearer tokens and JWT-shaped strings. The user's active flag and role are re-read from the database on every request, so deactivating an account kills its tokens immediately, and a password change invalidates every token issued before it (both tested) |
+| Residual risk | A stolen token works until it expires, the account is deactivated, or its password is changed. **No TLS in the local stack** — traffic is plain HTTP on localhost. One shared HS256 secret: every service that can verify can also sign |
 | Proposed | TLS terminated at the load balancer, HSTS; `jti` denylist in Redis for logout/revocation; short-lived access tokens with refresh tokens; asymmetric signing (RS256/ES256) via an identity provider |
 
 ### T3 — Brute-force and credential stuffing
@@ -64,7 +64,7 @@ All client input is untrusted: bodies, headers, tokens, and the text of ingested
 |---|---|
 | Attack | A user or stolen account sends many or very large requests to run up the LLM bill or exhaust quota for others |
 | Likelihood / impact | High / High |
-| Implemented | Per-user rate limit in Redis shared by all replicas (tested with two limiter instances and, against real Redis, with 50 concurrent hits). Question limited to 4,000 characters; request body limited (nginx `client_max_body_size` and a `Content-Length` check); output capped by `LLM_MAX_OUTPUT_TOKENS`; model allow-list so a client cannot select an expensive model (tested); per-replica concurrency cap with load shedding; `READ_ONLY` role cannot call the LLM at all; token usage recorded per request for auditing |
+| Implemented | Per-user rate limit in Redis shared by all replicas (tested with two limiter instances and, against real Redis, with 50 concurrent hits). Question limited to 4,000 characters; request body limited (nginx `client_max_body_size`, verified live with a 400 kB body, and a `Content-Length` check); output capped by `LLM_MAX_OUTPUT_TOKENS`; model allow-list so a client cannot select an expensive model (tested); per-replica concurrency cap with load shedding; `READ_ONLY` role cannot call the LLM at all; token usage recorded per request for auditing |
 | Residual risk | Fixed window allows up to 2× the limit across a boundary. While Redis is down the limiter falls back to a per-process cap (limit × replicas). There is no monetary or token *budget*, only a request count. The body-size check trusts `Content-Length`; a chunked upload is bounded only by nginx |
 | Proposed | Per-user and global token budgets (TPM) in Redis; billing alerts; sliding-window or token-bucket limiter |
 
@@ -114,7 +114,7 @@ All client input is untrusted: bodies, headers, tokens, and the text of ingested
 |---|---|
 | Attack | A normal user reaches admin functions through a missing check, a forged role claim, or an exposed endpoint |
 | Likelihood / impact | Low / High |
-| Implemented | Deny by default: every protected route declares its roles through `require_role`. The role used for the decision is read from the database, **not** from the token: a correctly signed token carrying `role=ADMIN` for a USER account still gets 403 (tested). The full role matrix is tested for all three roles. Request bodies reject unknown fields, so a client cannot send `role` or `user_id` where they are not expected. There is no public sign-up; only an admin creates users. An admin cannot deactivate or demote themself. Admin actions write an audit event (who, what, when; never the password). `/metrics` needs an ADMIN token or a dedicated scrape token compared in constant time |
+| Implemented | Deny by default: every protected route declares its roles through `require_role`. The role used for the decision is read from the database, **not** from the token: a correctly signed token carrying `role=ADMIN` for a USER account still gets 403 (tested). The full role matrix is tested for all three roles. Request bodies reject unknown fields, so a client cannot send `role` or `user_id` where they are not expected. There is no public sign-up; only an admin creates users. An admin cannot deactivate or demote themself. User changes and knowledge-base changes write an audit event (who, what, when; never the password), readable by admins at `GET /admin/audit` (tested). `/metrics` needs an ADMIN token or a dedicated scrape token compared in constant time |
 | Residual risk | A single compromised admin account has full control; audit events are stored in the same database an admin could tamper with through direct access; Qdrant and Redis have no passwords in the Compose stack and rely on network isolation |
 | Proposed | MFA for admins; append-only audit log shipped elsewhere; authentication and TLS on Redis and Qdrant; separate admin network path |
 
@@ -132,9 +132,9 @@ All client input is untrusted: bodies, headers, tokens, and the text of ingested
 
 | Check | Result |
 |---|---|
-| Automated security-relevant tests (auth, RBAC, throttling, error leakage, redaction) | Passing, part of the 146-test suite |
-| Ruff with the `S` (flake8-bandit) rule set | Clean |
+| Automated security-relevant tests (auth, RBAC, throttling, error leakage, redaction) | Passing, part of the 150-test suite |
+| Ruff with the `S` (flake8-bandit) rule set; mypy | Clean |
 | `pip-audit` | No known vulnerabilities (2026-10-03) |
-| Secret scan of the repository history | **Not run** |
+| Secret scan of the repository history | Regex scan of `git log -p` for key/token patterns and for the actual `.env` values: nothing found. A dedicated scanner (gitleaks) was **not run** |
 | Container image scan | **Not run** |
 | Penetration test or external review | **Not done** |

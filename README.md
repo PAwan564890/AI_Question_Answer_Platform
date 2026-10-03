@@ -39,8 +39,8 @@ Built for the *AI/LLM Platform & DevOps Engineer* technical assessment.
 | Redis: distributed rate limiting, login throttling, response cache | IMPLEMENTED | |
 | `/health`, `/health/live`, `/health/ready`, `/metrics` (Prometheus), JSON logs | IMPLEMENTED | |
 | Dockerfile (multi-stage, non-root), Compose with nginx + 3 API replicas | IMPLEMENTED | Single host |
-| `GET /chat/history`, `/admin/users` management, audit events | IMPLEMENTED | |
-| GitHub Actions workflow (lint, tests, audit, image build) | CONFIGURED | Not yet run on GitHub |
+| `GET /chat/history`, `/admin/users` management, audit trail (`GET /admin/audit`) | IMPLEMENTED | |
+| GitHub Actions workflow (lint, type check, tests, audit, image build) | CONFIGURED | Same steps pass locally; not yet run on GitHub |
 | Kubernetes manifests incl. HPA (`k8s/`) | CONFIGURED | YAML parses; never applied to a cluster |
 | AWS ALB / ECS or EKS / managed Redis and Qdrant / queue workers | PROPOSED | [docs/scaling-analysis.md](docs/scaling-analysis.md) |
 | OAuth2/OIDC with an identity provider behind an API gateway | PROPOSED | [docs/architecture.md](docs/architecture.md#6-evolution-to-ssooidc-proposed) |
@@ -100,7 +100,7 @@ docker compose up --build -d        # nginx + 3 API replicas + Qdrant + Redis
 python scripts/smoke_test.py        # 21 end-to-end checks; expect "ALL CHECKS PASSED"
 ```
 
-Then open <http://localhost:8000/docs> (Swagger UI).
+Then open <http://localhost:8000/docs> (Swagger UI; set `DOCS_ENABLED=false` to hide it).
 
 * The first admin is created by the one-shot `init` service from `ADMIN_USERNAME` /
   `ADMIN_PASSWORD` in `.env`. The username is `admin`; **read the generated password from `.env`**.
@@ -143,16 +143,16 @@ Example `/chat` response (mock provider):
 
 ```json
 {
-  "id": "0f6c1c0e-5a43-4d0c-9f0a-3f1f0a8f5b11",
+  "id": "b84f0e8b-ba03-49bb-b586-3eb6390b4d93",
   "answer": "[mock] Based on the knowledge base: Redis is an in-memory data store used for caching and rate limiting.",
   "provider": "mock",
   "model": "mock-1",
   "cached": false,
   "usage": {"prompt_tokens": 29, "completion_tokens": 18, "total_tokens": 47},
-  "latency_ms": 21,
+  "latency_ms": 7,
   "retries": 0,
   "fallback_used": false,
-  "sources": [{"doc_id": "…", "title": "Redis notes", "chunk_index": 0, "score": 0.52}]
+  "sources": [{"doc_id": "c4712634-b243-41a8-9fcd-23d413bca284", "title": "Redis notes", "chunk_index": 0, "score": 0.5}]
 }
 ```
 
@@ -172,6 +172,7 @@ Example `/chat` response (mock provider):
 | `POST /documents/search` | any authenticated | Vector search only, no LLM call |
 | `DELETE /documents/{doc_id}` | ADMIN | Remove a document and its chunks |
 | `GET /admin/users`, `POST /admin/users`, `PATCH /admin/users/{id}` | ADMIN | Manage users (role, active flag, password) |
+| `GET /admin/audit` | ADMIN | Audit trail: user and knowledge-base changes, newest first |
 | `GET /health`, `/health/live`, `/health/ready` | public | See [Monitoring](#11-monitoring) |
 | `GET /metrics` | ADMIN token, or `METRICS_SCRAPE_TOKEN` | Prometheus text format |
 
@@ -327,6 +328,9 @@ The cache is **per user** by design: a shared cache could leak one user's answer
   then `docker compose up -d`. Model names, prices and rate limits change; this repository
   deliberately hard-codes none of them. **This adapter has only been tested against stubbed HTTP
   responses** (`tests/unit/test_rag_and_adapters.py`), not against a live provider.
+  To verify a live provider with one real request (plus a bad-key and a timeout check), run
+  `python scripts/verify_llm.py`; it never prints the key. Until that has been run with a key,
+  real-provider behaviour is unverified.
 * With no key configured, `/health` reports `llm: unconfigured` (status `degraded`) and `/chat`
   returns a clean `503 LLM_NOT_CONFIGURED` — or the fallback's answer if one is configured.
 * A mock fallback exists for demos and graceful degradation only; responses carry
@@ -346,7 +350,7 @@ details:
 | 401 | `UNAUTHENTICATED`, `INVALID_TOKEN`, `TOKEN_EXPIRED`, `INVALID_CREDENTIALS` | Missing/invalid token; bad login (one generic message for unknown user, wrong password and disabled account) |
 | 403 | `FORBIDDEN` | Role not allowed |
 | 404 / 405 / 409 | `NOT_FOUND` / `METHOD_NOT_ALLOWED` / `CONFLICT` | Unknown resource / method / duplicate username |
-| 413 | `PAYLOAD_TOO_LARGE` | Body over `MAX_BODY_BYTES` |
+| 413 | `PAYLOAD_TOO_LARGE` | Body over `MAX_BODY_BYTES` (nginx returns the same JSON envelope at its 300 kB limit) |
 | 422 | `VALIDATION_ERROR`, `MODEL_NOT_ALLOWED` | Invalid body (field names reported, submitted values never echoed) |
 | 429 | `RATE_LIMITED` | Chat limit or login lockout; includes `Retry-After` |
 | 502 | `LLM_BAD_RESPONSE`, `LLM_BAD_REQUEST` | Provider returned an unusable result |
@@ -363,7 +367,7 @@ and full jitter (a provider `Retry-After` is honoured); an empty completion is r
 | Endpoint | Question it answers | Checks dependencies? |
 |---|---|---|
 | `GET /health/live` | Should the orchestrator restart this process? | No |
-| `GET /health/ready` | Should the load balancer send traffic here? | Yes: 503 unless Qdrant and Redis answer |
+| `GET /health/ready` | Should the load balancer send traffic here? | Yes: 503 unless Qdrant answers. Redis is reported but does not gate readiness, because `/chat` keeps working without it |
 | `GET /health` | What would a human or dashboard want to see? | Yes: `ok`, `degraded` (e.g. Redis down), `unhealthy` (Qdrant down) |
 
 ```bash
@@ -390,9 +394,9 @@ line of defence.
 
 ```bash
 pip install -r requirements-dev.txt
-pytest                                   # 146 tests, no Docker, no network, no API key
+pytest                                   # 150 tests, no Docker, no network, no API key
 pytest --cov=app --cov-report=term-missing
-ruff check . && ruff format --check .
+ruff check . && ruff format --check . && mypy app
 pip-audit -r requirements.txt
 
 # integration tests against real Redis + Qdrant containers
@@ -402,8 +406,8 @@ RUN_INTEGRATION=1 pytest -m integration
 python scripts/smoke_test.py             # end-to-end against the running stack
 ```
 
-Recorded results (2026-10-03): 146 passed, 96 % coverage, 3/3 integration tests passed, smoke test
-21/21, `pip-audit` clean. Full output and what was *not* tested: [docs/test-report.md](docs/test-report.md).
+Recorded results (2026-10-03): 150 passed, 96 % coverage, 3/3 integration tests passed, smoke test
+21/21, `mypy` and `pip-audit` clean; all of it repeated from a fresh clone. Full output and what was *not* tested: [docs/test-report.md](docs/test-report.md).
 
 ## 13. Scaling strategy (summary)
 
@@ -424,7 +428,7 @@ Full analysis: [docs/scaling-analysis.md](docs/scaling-analysis.md).
 
 Argon2id hashing · pinned-algorithm JWT with `sub/role/iat/exp/jti` · startup refusal of weak
 secrets in `prod` · deny-by-default RBAC from the database · login throttling · per-user rate
-limits · input and body-size limits · strict CORS (off unless configured, never with credentials) ·
+limits · input and body-size limits · password change invalidates older tokens · strict CORS (off unless configured, never with credentials) ·
 security headers · uniform error envelope · non-root container · no published database ports ·
 prompt-injection hardening (fixed system prompt, delimited untrusted input, no tools or secrets
 exposed to the model) · secret redaction in logs · audit events for admin actions.
@@ -453,12 +457,13 @@ phase is in [docs/migration-plan.md](docs/migration-plan.md).
   `EMBEDDING_PROVIDER=openai_compatible` for semantic search (requires re-ingesting documents).
 * **Circuit-breaker state is per replica**, not shared.
 * **Fixed-window rate limiting** allows up to 2× the limit across a window boundary.
-* **Tokens cannot be revoked before expiry** (30 min); deactivating the account works immediately.
+* **A single token cannot be revoked before expiry** (30 min). Deactivating the account or changing
+  its password invalidates all of its tokens immediately.
 * **Document ingestion is synchronous**; there is no background queue or worker.
 * **No TLS locally**; in production TLS terminates at the load balancer.
 * After changing the replica count, nginx must be reloaded.
 * The body-size limit relies on `Content-Length` plus nginx `client_max_body_size`.
-* Type checking with mypy was not run. The GitHub Actions workflow has not run yet.
+* The GitHub Actions workflow has not run yet (the repository has not been pushed).
 
 ## 17. Future improvements
 
@@ -488,9 +493,10 @@ app/
 tests/unit, tests/api, tests/integration
 docker/nginx.conf · Dockerfile · docker-compose.yml · docker-compose.dev.yml
 k8s/                      [CONFIGURED] manifests
-scripts/                  make_env.py, smoke_test.py, load_test.py
+scripts/                  make_env.py, smoke_test.py, load_test.py, verify_llm.py
 docs/                     architecture, scaling analysis, threat model, migration plan,
-                          technical report, test report, demo script, viva prep, evidence/
+                          technical report, test report, audit report, submission checklist,
+                          demo script, viva prep, evidence/
 ```
 
 Layering rule: routes validate and delegate; services hold the logic; repositories are the only

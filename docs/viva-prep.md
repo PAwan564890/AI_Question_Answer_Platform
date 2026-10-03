@@ -22,7 +22,7 @@ The workload is I/O-bound: a request spends almost all of its time waiting for t
 
 Replicas share nothing in memory. Without Redis, a rate-limit counter kept in each process would give every user three times the limit with three replicas, a login lockout would apply on one replica only, and each replica would have its own cache. Redis holds the state all replicas must agree on: the chat rate limit, the login throttle, the response cache, the knowledge-base version counter and the user-creation lock (`app/services/rate_limiter.py`, `cache.py`, `rag/knowledge_base.py`, `auth_service.py`). The smoke test shows a 429 after exactly 20 requests even though requests were spread over three replicas.
 
-**Follow-up trap:** "What happens when Redis is down?" Chat limiter fails open with a per-process cap, the cache is treated as a miss, and login fails closed with 503. This was tested automatically and by stopping the Redis container: `/health` degraded, `/health/ready` 503, `/health/live` 200.
+**Follow-up trap:** "What happens when Redis is down?" Chat limiter fails open with a per-process cap, the cache is treated as a miss, and login fails closed with 503. This was tested automatically and by stopping the Redis container: `/health` degraded, `/health/ready` and `/health/live` still 200.
 
 ### 3. Why a vector database instead of PostgreSQL? When would PostgreSQL be better?
 
@@ -50,7 +50,7 @@ An embedding is a fixed-length vector of numbers that represents a text, built s
 
 ### 7. Why JWT? How does it compare with server-side sessions? What about revocation?
 
-A JWT is a signed token the server can verify without looking up a session, so any replica can authenticate any request. Server-side sessions are easy to revoke (delete the session) but need a shared session store on every request. This project is a hybrid: the JWT proves identity, but `get_current_user` reloads the user from Qdrant on every request, so deactivating an account or changing a role takes effect immediately (`test_deactivated_user_token_stops_working_immediately`). What cannot be done is revoking one specific token for an active account before its 30-minute expiry, and a password change does not invalidate existing tokens.
+A JWT is a signed token the server can verify without looking up a session, so any replica can authenticate any request. Server-side sessions are easy to revoke (delete the session) but need a shared session store on every request. This project is a hybrid: the JWT proves identity, but `get_current_user` reloads the user from Qdrant on every request, so deactivating an account or changing a role takes effect immediately (`test_deactivated_user_token_stops_working_immediately`). A password change also invalidates every token issued before it (`password_changed_ts` is compared with the token's `iat`; `test_password_change_invalidates_existing_tokens`). What cannot be done is revoking one specific token for an active account before its 30-minute expiry.
 
 **Follow-up trap:** "If you read the database on every request, why use JWT at all?" Fair point: the benefit left is that no session store is needed and the token is self-verifying. A `jti` denylist in Redis or refresh tokens would add revocation; both are [PROPOSED].
 
@@ -108,9 +108,9 @@ The key is a SHA-256 over user ID, normalised question, provider, model, tempera
 
 ### 16. Liveness versus readiness versus health
 
-Liveness (`/health/live`) asks whether the process is running; it checks no dependency, so a database outage does not cause healthy processes to be restarted. Readiness (`/health/ready`) asks whether traffic should be sent here; it returns 503 unless Qdrant answers with all four collections and Redis answers. `/health` is the view for people: `ok`, `degraded` (Redis down or LLM not configured, HTTP 200) or `unhealthy` (Qdrant down, 503). The code is in `app/api/routes/ops.py`.
+Liveness (`/health/live`) asks whether the process is running; it checks no dependency, so a database outage does not cause healthy processes to be restarted. Readiness (`/health/ready`) asks whether traffic should be sent here; it returns 503 unless Qdrant answers with all four collections. Redis is reported in the body but does not gate readiness. `/health` is the view for people: `ok`, `degraded` (Redis down or LLM not configured, HTTP 200) or `unhealthy` (Qdrant down, 503). The code is in `app/api/routes/ops.py`.
 
-**Follow-up trap:** "Redis down makes readiness fail, but you said chat still works. Is that a contradiction?" It is a deliberate, conservative choice with a cost: an orchestrator that honours readiness would stop routing to all replicas during a Redis outage, even though chat could still be served. In Compose, nginx does not use readiness, so chat keeps working. Whether readiness should include Redis is debatable and would be revisited for Kubernetes.
+**Follow-up trap:** "Why is Redis not part of readiness?" Because chat is designed to keep working without Redis (the limiter fails open, the cache is skipped). If readiness failed on Redis, a load balancer would remove every replica at the same moment and turn a degraded service into a full outage. An earlier version did gate on Redis; the final audit found that it contradicted the fail-open design and changed it. The Redis outage is still visible in `/health` and in the `dependency_up` metric.
 
 ### 17. Connection pooling, and why replicas × pool size matters
 
@@ -164,7 +164,7 @@ All [PROPOSED]. Phase 0: make the instance reproducible (image in a registry, se
 
 ### 25. What would you do with another month?
 
-In order: test against one real provider with a spend cap and record real latency and token use; replace the hash embedder with real embeddings and measure retrieval quality; run the Kubernetes manifests on a local cluster; add Qdrant snapshots and rehearse a restore; move ingestion to a background queue; add a global concurrency limiter in Redis; add token revocation or move to OIDC; add mypy and image scanning to CI; and deploy phases 0 to 2 of the migration plan.
+In order: test against one real provider with a spend cap and record real latency and token use; replace the hash embedder with real embeddings and measure retrieval quality; run the Kubernetes manifests on a local cluster; add Qdrant snapshots and rehearse a restore; move ingestion to a background queue; add a global concurrency limiter in Redis; add token revocation or move to OIDC; add image and secret scanning to CI; and deploy phases 0 to 2 of the migration plan.
 
 ### 26. What are the weakest parts of your project?
 
@@ -172,8 +172,8 @@ In order: test against one real provider with a spend cap and record real latenc
 2. Qdrant is the system of record without transactions, constraints or backups.
 3. The default embedder is lexical; retrieval quality was not evaluated.
 4. Everything ran on one laptop; the highest throughput figure is limited by the load generator.
-5. Kubernetes manifests were never run, and the header comment in `k8s/app.yaml` overstates their validation.
-6. Tokens cannot be revoked; HS256 shared secret; no TLS locally.
+5. Kubernetes manifests were never run; they were only parsed as YAML.
+6. A single token cannot be revoked; HS256 shared secret; no TLS locally.
 7. Per-process breaker and semaphore; `/metrics` through nginx shows one replica.
 
 Stating these first is better than having them discovered.
@@ -225,20 +225,20 @@ General rule: never improvise a feature that is not implemented. If something is
 | Item | Value |
 |---|---|
 | Test machine | Intel Core i5-12500H, 16 logical CPUs, 16 GB RAM, Windows 11, Docker Desktop 29.8.1 (WSL2 VM: 16 CPUs, 7.6 GB) |
-| Tests | 146 passed, 3 skipped, about 14 s |
-| Coverage | 96% (1,625 statements, 65 missed) |
+| Tests | 150 passed, 3 skipped, about 20 s |
+| Coverage | 96% (1,644 statements, 62 missed) |
 | Integration tests | 3 passed on real Redis 7.4 and Qdrant 1.19.1; 50 concurrent hits → exactly 20 allowed |
 | pip-audit | No known vulnerabilities found |
 | Ruff | check and format clean |
 | Smoke test | 21 of 21; three distinct replicas; containers run as uid 10001 |
-| Redis stopped | `/health` degraded (200); `/health/ready` 503; `/health/live` 200; recovery in about 2 s |
+| Redis stopped | `/health` degraded (200); `/health/ready` 200 (Redis does not gate it); `/health/live` 200; back to ok within seconds of Redis returning |
 | Restart | `down` then `up` kept users and chat records |
 | Run 1 | 1 s latency, 3 replicas (60 slots), concurrency 100 → 53.0 req/s, all 200, client p50 1.80 s (prediction ≤ 60) |
 | Run 2 | 1 s latency, one replica (20 slots) → 19.2 req/s |
 | Run 3 | one replica, concurrency 300 → 300 × 200, 300 × 503 `LLM_OVERLOADED`, nothing hung |
 | Run 4 | zero latency, 3 replicas, concurrency 50 → 118.5 req/s, all 200; nginx p50 0.025 s, p95 0.039 s, p99 0.117 s; client p50 273 ms → load generator was the bottleneck; lower bound |
 | Run 5 | zero latency, one replica → 72.1 req/s (replica saturated) |
-| Not done | No real LLM; no cloud; Kubernetes not run; 500 RPS not tested; mypy not run |
+| Not done | No real LLM; no cloud; Kubernetes not run; 500 RPS not tested |
 
 ### Defaults worth remembering
 
