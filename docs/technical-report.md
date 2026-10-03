@@ -35,7 +35,7 @@ usage. It is written in Python 3.12 with FastAPI and runs as three identical con
 an nginx load balancer, with Redis for shared short-lived state and Qdrant for persistent data.
 
 The assessment evaluates "implementation skills and architectural thinking". The implementation
-is therefore deliberately small — a modular monolith of about 1,650 statements — while the
+is therefore deliberately small — a modular monolith of about 1,700 statements — while the
 behaviours that matter in production were built and tested rather than only described:
 authentication and role checks, rate limiting shared by all replicas, bounded retries with a
 circuit breaker and fallback, load shedding, health and readiness semantics, metrics, and
