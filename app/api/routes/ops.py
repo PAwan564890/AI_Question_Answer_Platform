@@ -59,7 +59,19 @@ def _llm_status(container: Container) -> str:
         return "mock"
     if primary.configured:
         return "configured"
-    return "fallback_only" if fallback is not None and fallback.configured else "unconfigured"
+    if fallback is not None and fallback.configured:
+        return "fallback_only"
+    return "unconfigured"
+
+
+def _embeddings_status(container: Container) -> str:
+    if container.embedder.configured:
+        return container.embedder.name
+    return "unconfigured"
+
+
+def _ok_or_fail(healthy: bool) -> str:
+    return "ok" if healthy else "fail"
 
 
 @router.get("/health/live", summary="Liveness probe")
@@ -76,8 +88,8 @@ async def ready(container: ContainerDep) -> JSONResponse:
         content={
             "status": "ready" if is_ready else "not_ready",
             "checks": {
-                "database": "ok" if database else "fail",
-                "redis": "ok" if redis else "fail",
+                "database": _ok_or_fail(database),
+                "redis": _ok_or_fail(redis),
             },
         },
     )
@@ -98,12 +110,10 @@ async def health(container: ContainerDep) -> JSONResponse:
         content={
             "status": status,
             "checks": {
-                "database": "ok" if database else "fail",
-                "redis": "ok" if redis else "fail",
+                "database": _ok_or_fail(database),
+                "redis": _ok_or_fail(redis),
                 "llm": llm,
-                "embeddings": container.embedder.name
-                if container.embedder.configured
-                else "unconfigured",
+                "embeddings": _embeddings_status(container),
             },
             "version": container.settings.app_version,
         },

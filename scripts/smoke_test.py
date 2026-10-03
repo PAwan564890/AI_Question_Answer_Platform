@@ -55,7 +55,10 @@ def call(method: str, path: str, body: dict | None = None, token: str | None = N
 def check(name: str, condition: bool, detail: str = "") -> None:
     global failures
     failures += 0 if condition else 1
-    print(f"[{'PASS' if condition else 'FAIL'}] {name}" + (f"  ({detail})" if detail else ""))
+    line = f"[{'PASS' if condition else 'FAIL'}] {name}"
+    if detail:
+        line += f"  ({detail})"
+    print(line)
 
 
 def login(username: str, password: str) -> str:

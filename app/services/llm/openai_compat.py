@@ -35,6 +35,21 @@ def _parse_retry_after(value: str | None) -> float | None:
         return None  # HTTP-date form: ignore and fall back to normal backoff
 
 
+def _raise_for_status(response: httpx.Response) -> None:
+    """Translate a provider HTTP error status into the gateway's error classes."""
+    status = response.status_code
+    if status < 400:
+        return
+    if status in (401, 403):
+        raise LLMAuthError(f"provider rejected credentials ({status})")
+    if status == 429:
+        retry_after = _parse_retry_after(response.headers.get("retry-after"))
+        raise LLMRateLimitError("provider rate limit", retry_after=retry_after)
+    if status >= 500:
+        raise LLMServerError(f"provider error ({status})")
+    raise LLMBadRequestError(f"provider rejected the request ({status})")
+
+
 class OpenAICompatibleProvider:
     name = "openai_compatible"
 
@@ -93,18 +108,7 @@ class OpenAICompatibleProvider:
         except httpx.TransportError as exc:
             raise LLMServerError("could not reach the provider") from exc
 
-        status = response.status_code
-        if status in (401, 403):
-            raise LLMAuthError(f"provider rejected credentials ({status})")
-        if status == 429:
-            raise LLMRateLimitError(
-                "provider rate limit",
-                retry_after=_parse_retry_after(response.headers.get("retry-after")),
-            )
-        if status >= 500:
-            raise LLMServerError(f"provider error ({status})")
-        if status >= 400:
-            raise LLMBadRequestError(f"provider rejected the request ({status})")
+        _raise_for_status(response)
 
         try:
             data = response.json()

@@ -80,7 +80,7 @@ CPUs, 16 GB RAM, Windows 11, Docker Desktop 29.8.1) with the mock LLM.
 | Check | Result |
 |---|---|
 | Unit and API tests | 150 passed, 3 skipped (integration tests, opt-in) |
-| Statement coverage | 96 % (1,644 statements, 62 missed) |
+| Statement coverage | 96 % (1,703 statements, 67 missed) |
 | Integration tests on real Redis 7.4 and Qdrant 1.19.1 | 3 passed |
 | `ruff check`, `ruff format --check`, `mypy app` | Clean |
 | `pip-audit -r requirements.txt` | No known vulnerabilities found |
@@ -967,7 +967,7 @@ containers, because fakes cannot prove atomicity or server-side behaviour.
 | Check | Result | Evidence file |
 |---|---|---|
 | `pytest` | 150 passed, 3 skipped | `evidence/pytest-coverage.txt` |
-| Coverage | 96 % (1,644 statements, 62 missed) | same |
+| Coverage | 96 % (1,703 statements, 67 missed) | same |
 | Integration | 3 passed | `evidence/pytest-integration.txt` |
 | `ruff`, `mypy` | Clean | — |
 | `pip-audit` | No known vulnerabilities found | `evidence/pip-audit.txt` |

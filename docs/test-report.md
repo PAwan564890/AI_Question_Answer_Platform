@@ -10,7 +10,7 @@ called: the LLM is the mock provider throughout.
 | Check | Command | Result | Evidence |
 |---|---|---|---|
 | Unit + API tests | `pytest` | **150 passed**, 3 skipped (the integration tests) | [pytest-coverage.txt](evidence/pytest-coverage.txt) |
-| Coverage | `pytest --cov=app --cov-report=term-missing` | **96 %** (1,644 statements, 62 missed) | same file |
+| Coverage | `pytest --cov=app --cov-report=term-missing` | **96 %** (1,703 statements, 67 missed) | same file |
 | Integration tests (real Redis 7.4 + Qdrant 1.19.1 containers) | `RUN_INTEGRATION=1 pytest -m integration` | **3 passed** | [pytest-integration.txt](evidence/pytest-integration.txt) |
 | Lint, formatting, types | `ruff check .` · `ruff format --check .` · `mypy app` | Clean | — |
 | Fresh clone, following only the README | clone → `make_env.py` → `docker compose up` → smoke test → new virtualenv → `pytest` | Stack healthy; smoke 21/21; 150 passed | [audit-report.md §7](audit-report.md) |

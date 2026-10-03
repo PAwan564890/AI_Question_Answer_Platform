@@ -24,13 +24,13 @@ Name                                  Stmts   Miss  Cover   Missing
 -------------------------------------------------------------------
 app\__init__.py                           0      0   100%
 app\api\__init__.py                       0      0   100%
-app\api\deps.py                          47      1    98%   39
+app\api\deps.py                          49      3    94%   39-41
 app\api\routes\__init__.py                0      0   100%
 app\api\routes\admin.py                  22      0   100%
 app\api\routes\auth.py                   11      0   100%
 app\api\routes\chat.py                   21      0   100%
 app\api\routes\documents.py              28      2    93%   51-52
-app\api\routes\ops.py                    58      1    98%   61
+app\api\routes\ops.py                    66      3    95%   61, 63, 70
 app\container.py                         59     10    83%   46-50, 54-56, 68, 94
 app\core\__init__.py                      0      0   100%
 app\core\config.py                       79      3    96%   101, 103, 117
@@ -40,36 +40,36 @@ app\core\security.py                     32      0   100%
 app\database\__init__.py                  0      0   100%
 app\database\bootstrap.py                25      4    84%   53-56
 app\database\client.py                    9      1    89%   25
-app\main.py                              77      7    91%   40, 44-48, 64, 151
+app\main.py                              87      7    92%   119, 123-127, 143, 160
 app\models\__init__.py                   51      0   100%
 app\monitoring\__init__.py                0      0   100%
 app\monitoring\metrics.py                16      0   100%
 app\repositories\__init__.py              0      0   100%
 app\repositories\chats.py                37      0   100%
-app\repositories\documents.py            29      0   100%
+app\repositories\documents.py            37      0   100%
 app\repositories\users.py                38      0   100%
 app\schemas\__init__.py                   0      0   100%
 app\schemas\chat.py                      46      0   100%
 app\schemas\documents.py                 30      0   100%
 app\schemas\users.py                     48      1    98%   17
 app\services\__init__.py                  0      0   100%
-app\services\auth_service.py             84      7    92%   82-83, 85, 94-95, 112, 127
+app\services\auth_service.py             87      8    91%   82-83, 85, 94-95, 118-119, 131
 app\services\cache.py                    33      0   100%
-app\services\chat_service.py             92      5    95%   198, 217-220
+app\services\chat_service.py            114      5    96%   177, 199-202
 app\services\llm\__init__.py              0      0   100%
 app\services\llm\base.py                 61      0   100%
 app\services\llm\circuit_breaker.py      55      0   100%
-app\services\llm\gateway.py             127      2    98%   144, 194
+app\services\llm\gateway.py             129      2    98%   143, 189
 app\services\llm\mock.py                 47      2    96%   46, 50
-app\services\llm\openai_compat.py        52      3    94%   34-35, 68
+app\services\llm\openai_compat.py        56      3    95%   34-35, 83
 app\services\rag\__init__.py              0      0   100%
 app\services\rag\embeddings.py           59      1    98%   105
 app\services\rag\knowledge_base.py       75      8    89%   42-43, 82-84, 96-98, 126
-app\services\rate_limiter.py             93      4    96%   145-146, 151-152
+app\services\rate_limiter.py             93      4    96%   149-150, 155-156
 -------------------------------------------------------------------
-TOTAL                                  1644     62    96%
+TOTAL                                  1703     67    96%
 =========================== short test summary info ===========================
 SKIPPED [1] tests\integration\test_real_services.py:35: set RUN_INTEGRATION=1
 SKIPPED [1] tests\integration\test_real_services.py:50: set RUN_INTEGRATION=1
 SKIPPED [1] tests\integration\test_real_services.py:76: set RUN_INTEGRATION=1
-======================= 150 passed, 3 skipped in 25.19s =======================
+======================= 150 passed, 3 skipped in 16.08s =======================

@@ -496,7 +496,7 @@ k8s/                      [CONFIGURED] manifests
 scripts/                  make_env.py, smoke_test.py, load_test.py, verify_llm.py
 docs/                     architecture, scaling analysis, threat model, migration plan,
                           technical report, test report, audit report, submission checklist,
-                          demo script, viva prep, evidence/
+                          demo script, viva prep, code guide, evidence/
 ```
 
 Layering rule: routes validate and delegate; services hold the logic; repositories are the only

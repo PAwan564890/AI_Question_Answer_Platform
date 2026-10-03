@@ -69,7 +69,11 @@ class InProcessLimiter:
         now = self._clock()
         window_id = int(now // window)
         # Drop counters from past windows so the dict cannot grow forever.
-        self._counts = {k: v for k, v in self._counts.items() if k[1] == window_id}
+        self._counts = {
+            (name, window_number): count
+            for (name, window_number), count in self._counts.items()
+            if window_number == window_id
+        }
         count = self._counts.get((identity, window_id), 0) + 1
         self._counts[(identity, window_id)] = count
         retry_after = int((window_id + 1) * window - now) + 1

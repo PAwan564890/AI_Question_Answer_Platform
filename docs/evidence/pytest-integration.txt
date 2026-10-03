@@ -12,4 +12,4 @@ tests/integration/test_real_services.py::test_bootstrap_is_idempotent_and_users_
 tests/integration/test_real_services.py::test_vector_search_on_real_qdrant PASSED [ 66%]
 tests/integration/test_real_services.py::test_rate_limiter_is_atomic_under_concurrency_on_real_redis PASSED [100%]
 
-===================== 3 passed, 150 deselected in 18.20s ======================
+===================== 3 passed, 150 deselected in 15.49s ======================

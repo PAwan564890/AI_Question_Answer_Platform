@@ -35,8 +35,10 @@ def client_ip(request: Request) -> str:
     Otherwise a client could forge it to dodge the throttle.
     """
     container: Container = request.app.state.container
-    if container.settings.trust_proxy_headers and (forwarded := request.headers.get("x-real-ip")):
-        return forwarded
+    if container.settings.trust_proxy_headers:
+        forwarded = request.headers.get("x-real-ip")
+        if forwarded:
+            return forwarded
     return request.client.host if request.client else "unknown"
 
 

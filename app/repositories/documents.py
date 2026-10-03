@@ -62,17 +62,19 @@ class DocumentRepository:
             score_threshold=score_threshold,
             with_payload=True,
         )
-        return [
-            RetrievedChunk(
-                doc_id=payload["doc_id"],
-                title=payload["title"],
-                chunk_index=payload["chunk_index"],
-                text=payload["text"],
-                score=round(float(point.score), 4),
+        chunks = []
+        for point in response.points:
+            payload = point.payload or {}
+            chunks.append(
+                RetrievedChunk(
+                    doc_id=payload["doc_id"],
+                    title=payload["title"],
+                    chunk_index=payload["chunk_index"],
+                    text=payload["text"],
+                    score=round(float(point.score), 4),
+                )
             )
-            for point in response.points
-            if (payload := point.payload)
-        ]
+        return chunks
 
     async def list(self, limit: int, offset: int) -> list[DocumentInfo]:
         # Chunk 0 of every document carries the document-level metadata.
@@ -85,18 +87,20 @@ class DocumentRepository:
             order_by=qm.OrderBy(key="created_ts", direction=qm.Direction.DESC),
             with_payload=True,
         )
-        return [
-            DocumentInfo(
-                doc_id=payload["doc_id"],
-                title=payload["title"],
-                source=payload.get("source"),
-                chunk_count=payload["chunk_count"],
-                created_by=payload["created_by"],
-                created_at=datetime.fromisoformat(payload["created_at"]),
+        documents = []
+        for point in points[offset:]:
+            payload = point.payload or {}
+            documents.append(
+                DocumentInfo(
+                    doc_id=payload["doc_id"],
+                    title=payload["title"],
+                    source=payload.get("source"),
+                    chunk_count=payload["chunk_count"],
+                    created_by=payload["created_by"],
+                    created_at=datetime.fromisoformat(payload["created_at"]),
+                )
             )
-            for point in points[offset:]
-            if (payload := point.payload)
-        ]
+        return documents
 
     async def delete(self, doc_id: str) -> bool:
         """Delete every chunk of a document. Returns False if it did not exist."""

@@ -43,7 +43,7 @@ from app.services.llm.base import (
     LLMServerError,
     LLMTimeoutError,
 )
-from app.services.llm.gateway import LLMGateway
+from app.services.llm.gateway import GatewayResult, LLMGateway
 from app.services.rag.embeddings import EmbeddingError
 from app.services.rag.knowledge_base import KnowledgeBase
 from app.services.rate_limiter import ChatRateLimiter
@@ -100,106 +100,87 @@ class ChatService:
 
     async def ask(self, user: User, payload: ChatRequest) -> ChatResponse:
         started = time.perf_counter()
-        primary = self._gateway.primary
-        model = payload.model or primary.default_model
-        if model not in self._settings.allowed_models | {primary.default_model}:
-            raise InvalidRequestError(
-                "The requested model is not allowed.", code="MODEL_NOT_ALLOWED"
-            )
+        model = self._resolve_model(payload)
         temperature = DEFAULT_TEMPERATURE if payload.temperature is None else payload.temperature
         use_rag = self._settings.rag_enabled and payload.use_rag
 
+        # Step 1: rate limit (raises RateLimitedError -> 429).
         await self._limiter.check(user.id)
 
+        # Step 2: cache lookup. A hit skips retrieval and the LLM entirely.
         cache_key = await self._cache_key(user, payload, model, temperature, use_rag)
-        if cache_key and (hit := await self._cache.get(cache_key)):
-            # No provider call happened, so no tokens were used by this request.
-            response = ChatResponse(
-                id=str(uuid.uuid4()),
-                answer=hit["answer"],
-                provider=hit["provider"],
-                model=hit["model"],
-                cached=True,
-                usage=Usage(),
-                latency_ms=_elapsed_ms(started),
-                sources=hit["sources"],
-            )
-            await self._persist(user, payload, response, status="ok", error_code=None)
-            return response
+        if cache_key is not None:
+            cached = await self._cache.get(cache_key)
+            if cached is not None:
+                response = _response_from_cache(cached, started)
+                await self._save_success(user, payload, response)
+                return response
 
-        chunks = await self._retrieve(payload.question) if use_rag else []
+        # Step 3: retrieval (RAG).
+        chunks: list[RetrievedChunk] = []
+        if use_rag:
+            chunks = await self._retrieve(payload.question)
+
+        # Step 4: the LLM call. No database call is in flight while we wait.
         request = LLMRequest(
             question=payload.question,
-            context=tuple(c.text for c in chunks),
+            context=tuple(chunk.text for chunk in chunks),
             model=payload.model,
             temperature=temperature,
             max_tokens=self._settings.llm_max_output_tokens,
         )
         try:
             outcome = await self._gateway.generate(request)
-        except LLMError as exc:
-            app_error = llm_error_to_app_error(exc)
+        except LLMError as error:
+            app_error = llm_error_to_app_error(error)
             logger.error(
                 "chat_llm_failed",
-                extra={"user_id": user.id, "error_code": exc.code, "retries": exc.retries_used},
+                extra={"user_id": user.id, "error_code": error.code, "retries": error.retries_used},
             )
-            failed = ChatResponse(
-                id=str(uuid.uuid4()),
-                answer="",
-                provider="",
-                model=model,
-                cached=False,
-                usage=Usage(),
-                latency_ms=_elapsed_ms(started),
-                retries=exc.retries_used,
-            )
-            await self._persist(user, payload, failed, status="error", error_code=app_error.code)
-            raise app_error from exc
+            await self._save_failure(user, payload, model, app_error.code, error, started)
+            raise app_error from error
 
-        result = outcome.result
-        response = ChatResponse(
-            id=str(uuid.uuid4()),
-            answer=result.text,
-            provider=result.provider,
-            model=result.model,
-            cached=False,
-            usage=Usage(
-                prompt_tokens=result.prompt_tokens,
-                completion_tokens=result.completion_tokens,
-                total_tokens=result.total_tokens,
-            ),
-            latency_ms=_elapsed_ms(started),
-            retries=outcome.retries,
-            fallback_used=outcome.fallback_used,
-            sources=[
-                Source(doc_id=c.doc_id, title=c.title, chunk_index=c.chunk_index, score=c.score)
-                for c in chunks
-            ],
-        )
-        await self._persist(user, payload, response, status="ok", error_code=None)
+        # Step 5: build the response, store the record, cache the answer.
+        response = _response_from_llm(outcome, chunks, started)
+        await self._save_success(user, payload, response)
+
         # A fallback answer is not cached: once the primary recovers, users
         # should get the primary's answer again.
-        if cache_key and not outcome.fallback_used:
+        if cache_key is not None and not outcome.fallback_used:
             await self._cache.set(
                 cache_key,
                 {
                     "answer": response.answer,
                     "provider": response.provider,
                     "model": response.model,
-                    "sources": [s.model_dump() for s in response.sources],
+                    "sources": [source.model_dump() for source in response.sources],
                 },
             )
         return response
 
+    def _resolve_model(self, payload: ChatRequest) -> str:
+        """The model to use: the client's choice if it is on the allow-list, else the default."""
+        default_model = self._gateway.primary.default_model
+        if payload.model is None or payload.model == default_model:
+            return default_model
+        if payload.model not in self._settings.allowed_models:
+            raise InvalidRequestError(
+                "The requested model is not allowed.", code="MODEL_NOT_ALLOWED"
+            )
+        return payload.model
+
     async def _cache_key(
         self, user: User, payload: ChatRequest, model: str, temperature: float, use_rag: bool
     ) -> str | None:
+        """Return the cache key, or None when the cache is disabled or Redis is down."""
         if not self._settings.cache_enabled:
             return None
-        try:
-            kb_version = await self._kb.version() if use_rag else "-"
-        except RedisError:
-            return None  # Redis is down: behave as if there were no cache
+        kb_version = "-"
+        if use_rag:
+            try:
+                kb_version = await self._kb.version()
+            except RedisError:
+                return None
         return build_cache_key(
             user_id=user.id,
             question=payload.question,
@@ -212,35 +193,28 @@ class ChatService:
         )
 
     async def _retrieve(self, question: str) -> list[RetrievedChunk]:
+        """Find context for the question. A failure means "no context", not an error."""
         try:
             chunks = await self._kb.search(question)
         except (EmbeddingError, ApiException) as exc:
             metrics.RAG_RETRIEVALS.labels(outcome="error").inc()
             logger.error("rag_retrieval_failed", extra={"reason": type(exc).__name__})
             return []
-        metrics.RAG_RETRIEVALS.labels(outcome="hit" if chunks else "empty").inc()
+        outcome = "hit" if chunks else "empty"
+        metrics.RAG_RETRIEVALS.labels(outcome=outcome).inc()
         return chunks
 
-    async def _persist(
-        self,
-        user: User,
-        payload: ChatRequest,
-        response: ChatResponse,
-        *,
-        status: str,
-        error_code: str | None,
-    ) -> None:
+    async def _save_success(self, user: User, payload: ChatRequest, response: ChatResponse) -> None:
         store_text = self._settings.store_chat_content
         record = ChatRecord(
             id=response.id,
             user_id=user.id,
             question=payload.question if store_text else None,
-            answer=(response.answer or None) if store_text else None,
-            provider=response.provider or None,
+            answer=response.answer if store_text else None,
+            provider=response.provider,
             model=response.model,
             cached=response.cached,
-            status=status,
-            error_code=error_code,
+            status="ok",
             prompt_tokens=response.usage.prompt_tokens,
             completion_tokens=response.usage.completion_tokens,
             total_tokens=response.usage.total_tokens,
@@ -248,15 +222,86 @@ class ChatService:
             retries=response.retries,
             fallback_used=response.fallback_used,
             created_at=datetime.now(UTC),
-            sources=[s.model_dump() for s in response.sources],
+            sources=[source.model_dump() for source in response.sources],
         )
+        await self._save(record)
+
+    async def _save_failure(
+        self,
+        user: User,
+        payload: ChatRequest,
+        model: str,
+        error_code: str,
+        error: LLMError,
+        started: float,
+    ) -> None:
+        """Failed requests are stored too: reliability reporting needs them."""
+        record = ChatRecord(
+            id=str(uuid.uuid4()),
+            user_id=user.id,
+            question=payload.question if self._settings.store_chat_content else None,
+            model=model,
+            status="error",
+            error_code=error_code,
+            latency_ms=_elapsed_ms(started),
+            retries=error.retries_used,
+            created_at=datetime.now(UTC),
+        )
+        await self._save(record)
+
+    async def _save(self, record: ChatRecord) -> None:
         try:
             await self._chats.add(record)
         except ApiException:
             # The user already waited for (and we already paid for) the answer:
-            # return it, and surface the lost record through logs and a metric.
+            # return it anyway, and surface the lost record through a log and a metric.
             metrics.CHAT_PERSIST_FAILURES.inc()
-            logger.exception("chat_persist_failed", extra={"user_id": user.id})
+            logger.exception("chat_persist_failed", extra={"user_id": record.user_id})
+
+
+def _response_from_cache(cached: dict, started: float) -> ChatResponse:
+    return ChatResponse(
+        id=str(uuid.uuid4()),
+        answer=cached["answer"],
+        provider=cached["provider"],
+        model=cached["model"],
+        cached=True,
+        usage=Usage(),  # no provider call, so no tokens were used by this request
+        latency_ms=_elapsed_ms(started),
+        sources=cached["sources"],
+    )
+
+
+def _response_from_llm(
+    outcome: GatewayResult, chunks: list[RetrievedChunk], started: float
+) -> ChatResponse:
+    result = outcome.result
+    sources = []
+    for chunk in chunks:
+        sources.append(
+            Source(
+                doc_id=chunk.doc_id,
+                title=chunk.title,
+                chunk_index=chunk.chunk_index,
+                score=chunk.score,
+            )
+        )
+    return ChatResponse(
+        id=str(uuid.uuid4()),
+        answer=result.text,
+        provider=result.provider,
+        model=result.model,
+        cached=False,
+        usage=Usage(
+            prompt_tokens=result.prompt_tokens,
+            completion_tokens=result.completion_tokens,
+            total_tokens=result.total_tokens,
+        ),
+        latency_ms=_elapsed_ms(started),
+        retries=outcome.retries,
+        fallback_used=outcome.fallback_used,
+        sources=sources,
+    )
 
 
 def _elapsed_ms(started: float) -> int:

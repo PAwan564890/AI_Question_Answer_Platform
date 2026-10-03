@@ -14,6 +14,7 @@
 | 8 | Final audit and compliance matrix | [`audit-report.md`](audit-report.md) |
 | 9 | Five-minute demonstration script | [`demo-script.md`](demo-script.md) |
 | 10 | Viva preparation | [`viva-prep.md`](viva-prep.md) |
+| 11 | Code guide: module walk-through and learning notes | [`code-guide.md`](code-guide.md) |
 
 ## 2. Repository structure
 

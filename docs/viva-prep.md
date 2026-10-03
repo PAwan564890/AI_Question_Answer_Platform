@@ -187,8 +187,8 @@ Stating these first is better than having them discovered.
 5. The route calls `ChatService.ask`. It checks the model against the allowlist, then calls `ChatRateLimiter.check`, which runs `INCR` + `EXPIRE` in Redis and raises 429 with `Retry-After` when over the limit.
 6. `_cache_key` reads `kb:version` and builds the SHA-256 key; `ResponseCache.get` looks it up. On a hit the response is built with `cached: true`, persisted and returned.
 7. On a miss, `_retrieve` calls `KnowledgeBase.search`: the embedder turns the question into a vector, and `DocumentRepository.search` calls Qdrant `query_points` with top-k 4 and score threshold 0.08.
-8. `LLMGateway.generate` fixes the deadline, acquires a semaphore slot (waiting at most 5 s), then `_call_with_retries` → `_attempt`: the breaker is consulted and `provider.generate` runs under `asyncio.wait_for`. The provider builds the messages with `SYSTEM_PROMPT` and `build_user_message`.
-9. `ChatService._persist` builds a `ChatRecord` and `ChatRepository.add` upserts it as a point in the Qdrant `chat_records` collection, with `created_ts` for ordering. If this write fails, the answer is still returned and a metric is incremented.
+8. `LLMGateway.generate` fixes the deadline, acquires a semaphore slot (waiting at most 5 s), then `_call_with_retries` → `_call_once`: the breaker is consulted and `provider.generate` runs under `asyncio.wait_for`. The provider builds the messages with `SYSTEM_PROMPT` and `build_user_message`.
+9. `ChatService._save_success` builds a `ChatRecord` and `ChatRepository.add` upserts it as a point in the Qdrant `chat_records` collection, with `created_ts` for ordering. If this write fails, the answer is still returned and a metric is incremented.
 10. A successful, non-fallback answer is stored with `ResponseCache.set` (TTL 600 s).
 11. Back in the middleware: metrics are recorded with the route template, `X-Request-ID`, `X-Served-By` and security headers are added, one JSON access line is logged, and the response returns through nginx to the client.
 
@@ -226,7 +226,7 @@ General rule: never improvise a feature that is not implemented. If something is
 |---|---|
 | Test machine | Intel Core i5-12500H, 16 logical CPUs, 16 GB RAM, Windows 11, Docker Desktop 29.8.1 (WSL2 VM: 16 CPUs, 7.6 GB) |
 | Tests | 150 passed, 3 skipped, about 20 s |
-| Coverage | 96% (1,644 statements, 62 missed) |
+| Coverage | 96% (1,703 statements, 67 missed) |
 | Integration tests | 3 passed on real Redis 7.4 and Qdrant 1.19.1; 50 concurrent hits → exactly 20 allowed |
 | pip-audit | No known vulnerabilities found |
 | Ruff | check and format clean |

@@ -101,25 +101,29 @@ class UserService:
         user = await self._users.get_by_id(user_id)
         if user is None:
             raise NotFoundError("User not found.")
-        if user.id == actor.id and (data.is_active is False or data.role not in (None, user.role)):
-            # Prevents an admin from locking the last admin (themselves) out.
+        # An admin must not be able to lock themselves (possibly the last admin) out.
+        deactivating = data.is_active is False
+        changing_role = data.role is not None and data.role != user.role
+        if user.id == actor.id and (deactivating or changing_role):
             raise InvalidRequestError("Administrators cannot deactivate or demote themselves.")
 
+        # `fields` is written to the database; `changes` goes to the audit trail
+        # and never contains the password or its hash.
         fields: dict = {}
+        changes: dict = {}
         if data.role is not None:
             fields["role"] = data.role.value
+            changes["role"] = data.role.value
         if data.is_active is not None:
             fields["is_active"] = data.is_active
+            changes["is_active"] = data.is_active
         if data.password is not None:
             fields["password_hash"] = await asyncio.to_thread(hash_password, data.password)
             # Tokens issued before this moment stop working (see get_current_user).
             fields["password_changed_ts"] = time.time()
+            changes["password_changed"] = True
         await self._users.update_fields(user_id, fields)
 
-        # The audit trail records what changed, never the password or its hash.
-        changes = {k: v for k, v in fields.items() if not k.startswith("password_")}
-        if data.password is not None:
-            changes["password_changed"] = True
         await self._audit.add(actor.id, "user.update", user_id, changes)
         logger.info("admin_user_updated", extra={"actor_id": actor.id, "target_id": user_id})
         updated = await self._users.get_by_id(user_id)

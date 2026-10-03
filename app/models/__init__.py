@@ -44,20 +44,22 @@ class DocumentInfo:
 
 @dataclass(slots=True)
 class ChatRecord:
+    """One /chat request as stored in the database (successful or failed)."""
+
     id: str
     user_id: str
-    question: str | None
-    answer: str | None
-    provider: str | None
+    question: str | None  # None when STORE_CHAT_CONTENT=false
     model: str | None
-    cached: bool
     status: str  # "ok" | "error"
-    error_code: str | None
-    prompt_tokens: int | None
-    completion_tokens: int | None
-    total_tokens: int | None
     latency_ms: int
-    retries: int
-    fallback_used: bool
     created_at: datetime
+    answer: str | None = None
+    provider: str | None = None
+    cached: bool = False
+    error_code: str | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
+    retries: int = 0
+    fallback_used: bool = False
     sources: list[dict] = field(default_factory=list)

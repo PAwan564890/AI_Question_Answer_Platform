@@ -5,8 +5,8 @@
 [PASS] login as admin  (status 200)
 [PASS] admin creates USER account  (status 201)
 [PASS] admin creates READ_ONLY account  (status 201)
-[PASS] login as smoke_user_0b26b6  (status 200)
-[PASS] login as smoke_reader_0b26b6  (status 200)
+[PASS] login as smoke_user_0a4636  (status 200)
+[PASS] login as smoke_reader_0a4636  (status 200)
 [PASS] USER on /admin/users -> 403
 [PASS] READ_ONLY on POST /chat -> 403
 [PASS] admin ingests a document into Qdrant  (status 201)
@@ -16,9 +16,9 @@
 [PASS] identical question is served from the Redis cache
 [PASS] READ_ONLY can run a vector search
 [PASS] chat records were persisted in Qdrant
-[PASS] rate limit: 429 after 20 requests per window, across replicas  (18 more allowed after the 2 earlier calls, Retry-After=22)
+[PASS] rate limit: 429 after 20 requests per window, across replicas  (18 more allowed after the 2 earlier calls, Retry-After=7)
 [PASS] GET /metrics (ADMIN) exposes Prometheus series
 [PASS] cleanup: document deleted
 
-Replicas that answered (X-Served-By): ['38da045e7ca9', 'd9d02730104c', 'fd57a07dcac7']
+Replicas that answered (X-Served-By): ['3f6144d4e3f8', '7808457f24ff', '9ca56cc8f9e5']
 RESULT: ALL CHECKS PASSED
