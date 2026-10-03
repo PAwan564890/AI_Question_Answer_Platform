@@ -238,13 +238,11 @@ async def test_admin_actions_are_audited_without_secrets(harness):
 
     audit = await harness.client.get("/admin/audit", headers=admin)
     assert audit.status_code == 200
-    assert [e["action"] for e in audit.json()] == [
-        "document.delete",
-        "document.ingest",
-        "user.update",
-        "user.create",
-    ]
-    assert audit.json()[2]["changes"] == {"password_changed": True}
+    # Compared without relying on order: events written within the same clock
+    # tick (about 16 ms on Windows) have equal timestamps.
+    events = {event["action"]: event for event in audit.json()}
+    assert set(events) == {"user.create", "user.update", "document.ingest", "document.delete"}
+    assert events["user.update"]["changes"] == {"password_changed": True}
     assert "An0ther-strong-pw" not in audit.text and "argon2" not in audit.text
 
 

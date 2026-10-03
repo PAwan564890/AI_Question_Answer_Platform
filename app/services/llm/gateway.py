@@ -87,8 +87,14 @@ class LLMGateway:
         self._sleep = sleep
         self._rand = rand
         self._clock = clock
+
+        # One circuit breaker per provider. Each breaker reports its state to a
+        # Prometheus gauge whenever it changes.
+        providers = [primary]
+        if fallback is not None:
+            providers.append(fallback)
         self._breakers: dict[str, CircuitBreaker] = {}
-        for provider in self._chain():
+        for provider in providers:
             gauge = metrics.LLM_CIRCUIT_STATE.labels(provider=provider.name)
             gauge.set(CircuitState.CLOSED)
             self._breakers[provider.name] = CircuitBreaker(
@@ -98,9 +104,6 @@ class LLMGateway:
                 on_state_change=gauge.set,
             )
 
-    def _chain(self) -> list[LLMProvider]:
-        return [self.primary] + ([self.fallback] if self.fallback else [])
-
     def breaker_state(self, provider_name: str) -> CircuitState:
         return self._breakers[provider_name].state
 
@@ -108,34 +111,30 @@ class LLMGateway:
         deadline = self._clock() + self._deadline
         await self._acquire_slot()
         try:
-            retries = 0
-            last_error: LLMError | None = None
-            for index, provider in enumerate(self._chain()):
+            try:
+                result, retries = await self._call_with_retries(self.primary, request, deadline)
+                return GatewayResult(result=result, retries=retries, fallback_used=False)
+            except LLMBadRequestError:
+                raise  # the request itself is wrong: another provider will not help
+            except LLMError as primary_error:
+                if self.fallback is None:
+                    raise
+                logger.warning(
+                    "llm_fallback",
+                    extra={"provider": self.fallback.name, "error_code": primary_error.code},
+                )
                 # The requested model name belongs to the primary provider; the
                 # fallback always uses its own configured default.
-                attempt_request = request if index == 0 else replace(request, model=None)
-                if index > 0:
-                    logger.warning(
-                        "llm_fallback",
-                        extra={
-                            "provider": provider.name,
-                            "error_code": last_error.code if last_error else None,
-                        },
-                    )
-                try:
-                    result, used = await self._call_with_retries(
-                        provider, attempt_request, deadline
-                    )
-                except LLMBadRequestError:
-                    raise  # the request itself is wrong: another provider will not help
-                except LLMError as exc:
-                    last_error = exc
-                    retries += exc.retries_used
-                    continue
-                if index > 0:
-                    metrics.LLM_FALLBACKS.inc()
-                return GatewayResult(result=result, retries=retries + used, fallback_used=index > 0)
-            raise last_error or LLMConfigError("no LLM provider is configured")
+                fallback_request = replace(request, model=None)
+                result, fallback_retries = await self._call_with_retries(
+                    self.fallback, fallback_request, deadline
+                )
+                metrics.LLM_FALLBACKS.inc()
+                return GatewayResult(
+                    result=result,
+                    retries=primary_error.retries_used + fallback_retries,
+                    fallback_used=True,
+                )
         finally:
             self._semaphore.release()
 
@@ -150,86 +149,80 @@ class LLMGateway:
     async def _call_with_retries(
         self, provider: LLMProvider, request: LLMRequest, deadline: float
     ) -> tuple[LLMResult, int]:
-        breaker = self._breakers[provider.name]
-        attempt = 0
+        """Call one provider, retrying retryable errors. Returns (result, retries used)."""
+        retries = 0
         while True:
-            error = await self._attempt(provider, breaker, request, deadline)
-            if isinstance(error, LLMResult):
-                return error, attempt
+            try:
+                result = await self._call_once(provider, request, deadline)
+                return result, retries
+            except LLMError as error:
+                self._count_failure(provider.name, error)
+                delay = self._retry_delay(error, retries)
+                out_of_retries = retries >= self._allowed_retries(error)
+                too_late = self._clock() + delay >= deadline
+                if out_of_retries or too_late:
+                    error.retries_used = retries
+                    raise
 
-            # Content errors get one retry; other retryable errors get the full budget.
-            allowed = 0
-            if error.retryable:
-                allowed = (
-                    min(1, self._max_retries)
-                    if isinstance(error, LLMContentError)
-                    else self._max_retries
-                )
-            delay = self._retry_delay(error, attempt)
-            if attempt >= allowed or self._clock() + delay >= deadline:
-                error.retries_used = attempt
-                raise error
-
-            attempt += 1
+            retries += 1
             metrics.LLM_RETRIES.labels(provider=provider.name).inc()
-            logger.info(
-                "llm_retry",
-                extra={"provider": provider.name, "attempt": attempt, "error_code": error.code},
-            )
+            logger.info("llm_retry", extra={"provider": provider.name, "attempt": retries})
             await self._sleep(delay)
 
-    async def _attempt(
-        self,
-        provider: LLMProvider,
-        breaker: CircuitBreaker,
-        request: LLMRequest,
-        deadline: float,
-    ) -> LLMResult | LLMError:
-        """Make one call. Returns the result, or the error (never raises LLMError)."""
+    def _allowed_retries(self, error: LLMError) -> int:
+        if not error.retryable:
+            return 0
+        if isinstance(error, LLMContentError):
+            return min(1, self._max_retries)  # an empty answer is retried once at most
+        return self._max_retries
+
+    async def _call_once(
+        self, provider: LLMProvider, request: LLMRequest, deadline: float
+    ) -> LLMResult:
+        """Make a single provider call. Raises an LLMError subclass on any failure."""
         name = provider.name
+        breaker = self._breakers[name]
         if not provider.configured:
-            return self._failed(name, LLMConfigError(f"provider '{name}' is not configured"))
+            raise LLMConfigError(f"provider '{name}' is not configured")
         remaining = deadline - self._clock()
         if remaining <= 0:
-            return self._failed(name, LLMTimeoutError("overall deadline exceeded"))
+            raise LLMTimeoutError("overall deadline exceeded")
         if not breaker.allow():
-            return self._failed(name, LLMCircuitOpenError(f"circuit open for '{name}'"))
+            raise LLMCircuitOpenError(f"circuit open for '{name}'")
 
         started = time.perf_counter()
         try:
             result = await asyncio.wait_for(
                 provider.generate(request), timeout=min(self._timeout, remaining)
             )
-        except TimeoutError:
-            error: LLMError = LLMTimeoutError("provider call timed out")
-        except LLMError as exc:
-            error = exc
-        else:
-            breaker.record_success()
-            metrics.LLM_DURATION.labels(provider=name).observe(time.perf_counter() - started)
-            metrics.LLM_REQUESTS.labels(provider=name, outcome="success").inc()
-            for kind, count in (
-                ("prompt", result.prompt_tokens),
-                ("completion", result.completion_tokens),
-            ):
-                if count is not None:
-                    metrics.LLM_TOKENS.labels(provider=name, type=kind).inc(count)
-            return result
-
-        metrics.LLM_DURATION.labels(provider=name).observe(time.perf_counter() - started)
-        if isinstance(error, _BREAKER_FAILURES):
+        except TimeoutError as exc:
             breaker.record_failure()
-        else:
-            breaker.release_trial()
-        if isinstance(error, LLMAuthError):
-            logger.critical("llm_auth_failed", extra={"provider": name})
-        return self._failed(name, error)
+            raise LLMTimeoutError("provider call timed out") from exc
+        except LLMError as error:
+            if isinstance(error, _BREAKER_FAILURES):
+                breaker.record_failure()
+            else:
+                breaker.release_trial()
+            if isinstance(error, LLMAuthError):
+                logger.critical("llm_auth_failed", extra={"provider": name})
+            raise
+        finally:
+            metrics.LLM_DURATION.labels(provider=name).observe(time.perf_counter() - started)
+
+        breaker.record_success()
+        metrics.LLM_REQUESTS.labels(provider=name, outcome="success").inc()
+        if result.prompt_tokens is not None:
+            metrics.LLM_TOKENS.labels(provider=name, type="prompt").inc(result.prompt_tokens)
+        if result.completion_tokens is not None:
+            metrics.LLM_TOKENS.labels(provider=name, type="completion").inc(
+                result.completion_tokens
+            )
+        return result
 
     @staticmethod
-    def _failed(provider_name: str, error: LLMError) -> LLMError:
+    def _count_failure(provider_name: str, error: LLMError) -> None:
         metrics.LLM_REQUESTS.labels(provider=provider_name, outcome="failure").inc()
         metrics.LLM_FAILURES.labels(provider=provider_name, error_type=type(error).__name__).inc()
-        return error
 
     def _retry_delay(self, error: LLMError, attempt: int) -> float:
         """Honour the provider's Retry-After; otherwise exponential backoff with full jitter.
