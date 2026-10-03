@@ -47,6 +47,10 @@ Built for the *AI/LLM Platform & DevOps Engineer* technical assessment.
 
 ## 2. Architecture
 
+The diagram shows what is **[IMPLEMENTED]** and runs locally with Docker Compose on one machine.
+The **[PROPOSED]** cloud architecture is a separate diagram in
+[docs/scaling-analysis.md §13](docs/scaling-analysis.md#13-target-production-architecture-proposed).
+
 ```mermaid
 flowchart LR
     U[Client] -->|HTTP :8000| N[nginx<br/>load balancer]
