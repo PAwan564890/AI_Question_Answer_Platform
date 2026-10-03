@@ -1,0 +1,14 @@
+# Development override: publishes Qdrant and Redis on localhost so the API can
+# run on the host with `uvicorn --reload`, and so integration tests can reach them.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d qdrant redis
+#
+# Bound to 127.0.0.1 only: never reachable from other machines.
+
+services:
+  qdrant:
+    ports:
+      - "127.0.0.1:${QDRANT_DEV_PORT:-6333}:6333"
+  redis:
+    ports:
+      - "127.0.0.1:${REDIS_DEV_PORT:-6379}:6379"

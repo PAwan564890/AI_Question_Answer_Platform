@@ -1,0 +1,93 @@
+# Production-like local stack:
+#
+#   client -> nginx (load balancer) -> app x N (stateless FastAPI) -> Qdrant + Redis
+#
+#   python scripts/make_env.py                         # once: creates .env with random secrets
+#   docker compose up --build -d                        # 3 API replicas behind nginx
+#   APP_REPLICAS=5 docker compose up -d                 # or set APP_REPLICAS in .env
+#
+# Only nginx publishes a port. Qdrant and Redis are reachable solely on the
+# internal Compose network (docker-compose.dev.yml exposes them for development).
+# This is a single-host stack: it demonstrates the architecture, it is not
+# highly available.
+
+name: ai-qa-platform
+
+x-app-image: &app-image
+  image: ai-qa-platform:local
+  build: .
+  env_file: .env
+  environment:
+    # Inside the Compose network, services are addressed by service name.
+    QDRANT_URL: http://qdrant:6333
+    REDIS_URL: redis://redis:6379/0
+    TRUST_PROXY_HEADERS: "true"   # the app is reachable only through our nginx
+
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.19.1
+    restart: unless-stopped
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      # The image ships without curl/wget: open a TCP connection with bash instead.
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    # AOF: counters and cache survive a restart. volatile-lru: under memory
+    # pressure only keys with a TTL (cache entries, rate-limit windows) are evicted.
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "volatile-lru"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # One-shot job: creates the Qdrant collections ("migration") and seeds the
+  # first ADMIN from ADMIN_USERNAME / ADMIN_PASSWORD, then exits.
+  init:
+    <<: *app-image
+    command: ["python", "-m", "app.database.seed"]
+    restart: "no"
+    depends_on:
+      qdrant:
+        condition: service_healthy
+
+  app:
+    <<: *app-image
+    restart: unless-stopped
+    # No container_name and no published port: both would prevent running several replicas.
+    deploy:
+      replicas: ${APP_REPLICAS:-3}
+    expose:
+      - "8000"
+    depends_on:
+      init:
+        condition: service_completed_successfully
+      qdrant:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    stop_grace_period: 35s   # a little more than uvicorn's 30 s graceful shutdown
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "${HOST_PORT:-8000}:80"
+    volumes:
+      - ./docker/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      app:
+        condition: service_healthy
+
+volumes:
+  qdrant_data:
+  redis_data:
