@@ -11,10 +11,9 @@ Built for the *AI/LLM Platform & DevOps Engineer* technical assessment.
 > **Honesty labels used throughout this repository**
 > **[IMPLEMENTED]** built, running and tested here · **[CONFIGURED]** configuration exists but was
 > never run in a real environment · **[PROPOSED]** design for a future production system only.
->
-> Local Docker Compose is **not** a highly available cloud system, and local JWT login is **not**
-> enterprise SSO. Nothing in this repository has been deployed to a cloud, and no real LLM
-> provider was called during development: every test and measurement uses the mock provider.
+>Local Docker Compose is **not** a highly available cloud system, and local JWT login is **not** enterprise SSO. Nothing in this repository has been deployed to a cloud.
+>A real OpenAI-compatible LLM provider has been verified locally using the configured provider adapter and a live API request. The verification confirmed successful generation, token usage, latency reporting, bounded retry behavior, timeout handling, invalid-credential handling, and mock fallback behavior.
+>Automated tests continue to use the mock provider so that the test suite remains deterministic and does not depend on an external API.
 
 ## Contents
 
@@ -35,7 +34,7 @@ Built for the *AI/LLM Platform & DevOps Engineer* technical assessment.
 | RAG – document ingestion, chunking, embeddings, vector search, cited sources | IMPLEMENTED | Default embedder is lexical (see [Limitations](#16-limitations)) |
 | Qdrant as the only database (users, chat records, audit events, document vectors) | IMPLEMENTED | Replaces PostgreSQL |
 | LLM gateway: timeouts, overall deadline, bounded retries with backoff + jitter, circuit breaker, fallback provider, concurrency cap with load shedding | IMPLEMENTED | |
-| Mock LLM provider (default) and OpenAI-compatible HTTP adapter | IMPLEMENTED | Adapter tested against stubbed HTTP only |
+| Mock LLM provider (default) and OpenAI-compatible HTTP adapter | IMPLEMENTED | Adapter covered by automated tests and verified with a live OpenAI-compatible provider |
 | Redis: distributed rate limiting, login throttling, response cache | IMPLEMENTED | |
 | `/health`, `/health/live`, `/health/ready`, `/metrics` (Prometheus), JSON logs | IMPLEMENTED | |
 | Dockerfile (multi-stage, non-root), Compose with nginx + 3 API replicas | IMPLEMENTED | Single host |
@@ -69,9 +68,13 @@ flowchart LR
     G -.->|fallback| P2[fallback provider]
 ```
 
-A `/chat` request: nginx → request-id/metrics middleware → JWT + role check → Redis rate limit →
-Redis cache lookup → embed question and search Qdrant for context → LLM gateway (timeout, retry,
-breaker, fallback) → write the record to Qdrant → cache the answer → respond.
+A `/chat` request follows this flow: nginx → request-id/metrics middleware → JWT + role check →
+Redis rate limit → Redis cache lookup → embed question and search Qdrant for context → LLM gateway
+(timeout, retry, circuit breaker, concurrency control, fallback) → write the chat record to Qdrant →
+cache the successful answer → respond.
+
+If the cache already contains a valid answer, the request can return from Redis without making a
+new LLM call.
 
 The API replicas hold no state of their own: any replica can serve any request, which is what
 makes horizontal scaling possible. Details: [docs/architecture.md](docs/architecture.md).
@@ -162,7 +165,32 @@ Example `/chat` response (mock provider):
 
 `usage` is passed through from the provider and is `null` when the provider does not report it
 (and for cache hits, where no tokens were spent). The mock's counts are word counts, a simulation.
+### Verified live-provider example
 
+The OpenAI-compatible adapter was also verified locally with a live provider. The following is a
+sanitized response from an actual `/chat` request; no API key or credential is included.
+
+```json
+{
+  "answer": "According to the provided context, Redis can reduce latency in an AI application by caching frequently repeated questions and their answers, which avoids unnecessary LLM API calls.",
+  "provider": "openai_compatible",
+  "model": "qwen/qwen3.8-27b",
+  "cached": false,
+  "usage": {
+    "prompt_tokens": 186,
+    "completion_tokens": 32,
+    "total_tokens": 218
+  },
+  "latency_ms": 619,
+  "retries": 0,
+  "fallback_used": false,
+  "sources": [
+    {
+      "title": "Redis Architecture Notes",
+      "chunk_index": 0
+    }
+  ]
+}
 ### Endpoints
 
 | Method and path | Roles | Purpose |
@@ -316,30 +344,15 @@ The cache is **per user** by design: a shared cache could leak one user's answer
 
 ## 9. LLM provider configuration
 
-* **`mock` (default)** needs no key, is deterministic, and prefixes every answer with `[mock]`.
-  All automated tests use it.
 * **`openai_compatible`** talks to any service that implements the OpenAI Chat Completions HTTP
   API. Set in `.env`:
 
-  ```
+  ```text
   LLM_PROVIDER=openai_compatible
   OPENAI_BASE_URL=<base URL from your provider's documentation>
   OPENAI_API_KEY=<your key>
   OPENAI_MODEL=<model name from your provider's documentation>
-  LLM_FALLBACK_PROVIDER=mock        # optional: degrade to a labelled mock answer
-  ```
-
-  then `docker compose up -d`. Model names, prices and rate limits change; this repository
-  deliberately hard-codes none of them. **This adapter has only been tested against stubbed HTTP
-  responses** (`tests/unit/test_rag_and_adapters.py`), not against a live provider.
-  To verify a live provider with one real request (plus a bad-key and a timeout check), run
-  `python scripts/verify_llm.py`; it never prints the key. Until that has been run with a key,
-  real-provider behaviour is unverified.
-* With no key configured, `/health` reports `llm: unconfigured` (status `degraded`) and `/chat`
-  returns a clean `503 LLM_NOT_CONFIGURED` — or the fallback's answer if one is configured.
-* A mock fallback exists for demos and graceful degradation only; responses carry
-  `"fallback_used": true` and `"provider": "mock"` so it can never pass as a real answer.
-
+  LLM_FALLBACK_PROVIDER=mock
 ## 10. Error handling
 
 Every error uses one envelope and never contains stack traces, provider messages or connection
@@ -410,8 +423,16 @@ RUN_INTEGRATION=1 pytest -m integration
 python scripts/smoke_test.py             # end-to-end against the running stack
 ```
 
-Recorded results (2026-10-03): 150 passed, 96 % coverage, 3/3 integration tests passed, smoke test
-21/21, `mypy` and `pip-audit` clean; all of it repeated from a fresh clone. Full output and what was *not* tested: [docs/test-report.md](docs/test-report.md).
+Recorded automated test results (2026-10-03): 150 tests passed, 96% coverage, 3/3 integration
+tests passed, smoke test 21/21, `mypy` and `pip-audit` clean. The automated suite uses the mock
+provider and does not depend on an external LLM API.
+
+Separately, the OpenAI-compatible adapter was verified against a live provider using
+`scripts/verify_llm.py`. That verification passed the real-request, invalid-credential, fallback,
+and timeout checks.
+
+Full test results and known limitations:
+[docs/test-report.md](docs/test-report.md).
 
 ## 13. Scaling strategy (summary)
 
@@ -424,8 +445,9 @@ shedding, circuit breaking, fallback, and (proposed) queues and multiple provide
 
 What was actually measured, on one laptop with the mock LLM
 ([raw output](docs/evidence/load-test.txt)): with a simulated 1 s model latency, 3 replicas × 20
-slots sustained 53.0 req/s (theory: at most 60); one overloaded replica shed 300 of 600 requests
-with fast 503s instead of hanging. **500 RPS was not tested and is not claimed.**
+slots sustained 53.0 req/s (theoretical concurrency ceiling: 60 in-flight calls); one overloaded
+replica shed 300 of 600 requests with fast 503 responses instead of allowing requests to hang.
+**500 RPS was not tested and is not claimed.**
 Full analysis: [docs/scaling-analysis.md](docs/scaling-analysis.md).
 
 ## 14. Security
@@ -453,21 +475,46 @@ phase is in [docs/migration-plan.md](docs/migration-plan.md).
 
 ## 16. Limitations
 
-* **No real LLM was called.** The OpenAI-compatible adapter is verified against stubbed HTTP only.
-* **Nothing is deployed to a cloud**; Kubernetes manifests were never applied to a cluster.
-* **Single-node Qdrant and Redis**: a Compose stack on one machine is not highly available.
-* **Qdrant as system of record**: no transactions, constraints or joins (see section 7).
-* **The default `hash` embedder is lexical**: it matches shared words, not meaning. Use
-  `EMBEDDING_PROVIDER=openai_compatible` for semantic search (requires re-ingesting documents).
-* **Circuit-breaker state is per replica**, not shared.
-* **Fixed-window rate limiting** allows up to 2× the limit across a window boundary.
-* **A single token cannot be revoked before expiry** (30 min). Deactivating the account or changing
-  its password invalidates all of its tokens immediately.
+* **Cloud deployment has not been performed.** The application has been verified locally with
+  Docker Compose, but the Kubernetes manifests have not been applied to a real cluster and the
+  proposed AWS architecture has not been deployed.
+
+* **Live LLM verification is provider-specific.** A real OpenAI-compatible provider was verified
+  locally with `scripts/verify_llm.py`, but production-scale provider reliability, quotas, billing,
+  and cloud-network behavior have not been tested.
+
+* **Single-node Qdrant and Redis**: the Compose stack runs on one machine and is not highly
+  available.
+
+* **Qdrant as system of record**: Qdrant does not provide the relational transactions, constraints
+  and joins normally expected from PostgreSQL. This trade-off is documented in section 7.
+
+* **The default `hash` embedder is lexical**: it matches shared words rather than semantic meaning.
+  Use `EMBEDDING_PROVIDER=openai_compatible` for semantic search and re-ingest documents after
+  changing the embedding configuration.
+
+* **Circuit-breaker state is per replica**, not shared across the API tier.
+
+* **Fixed-window rate limiting** allows up to approximately 2× the configured limit across a
+  window boundary.
+
+* **A single token cannot be revoked before expiry** (30 minutes). Deactivating an account or
+  changing its password invalidates all of its tokens immediately.
+
 * **Document ingestion is synchronous**; there is no background queue or worker.
-* **No TLS locally**; in production TLS terminates at the load balancer.
+
+* **No TLS locally**; in production TLS is expected to terminate at the load balancer.
+
 * After changing the replica count, nginx must be reloaded.
+
 * The body-size limit relies on `Content-Length` plus nginx `client_max_body_size`.
-* The GitHub Actions workflow has not run yet (the repository has not been pushed).
+
+* **The GitHub Actions workflow has not run on GitHub yet** because the repository has not been
+  pushed to GitHub.
+
+* **The 500 RPS assessment scenario was not tested directly.** The scaling discussion is based on
+  the measured local load test, concurrency limits, load shedding behavior, and the proposed
+  production architecture.
 
 ## 17. Future improvements
 

@@ -1,0 +1,43 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --color-bg-primary: #0b0f17;
+    --color-bg-secondary: #111827;
+    --color-border: #1f2937;
+  }
+
+  body {
+    @apply bg-slate-950 text-slate-100 antialiased font-sans selection:bg-cyan-500/30 selection:text-cyan-200;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-slate-800 rounded-full hover:bg-slate-700 transition-colors;
+  }
+}
+
+@layer utilities {
+  .glass-panel {
+    @apply bg-slate-900/70 backdrop-blur-md border border-slate-800/80 shadow-xl;
+  }
+
+  .glass-card {
+    @apply bg-slate-900/50 backdrop-blur-sm border border-slate-800/60 hover:border-slate-700/80 transition-all duration-200;
+  }
+
+  .glow-brand {
+    box-shadow: 0 0 20px -5px rgba(14, 165, 233, 0.3);
+  }
+}
