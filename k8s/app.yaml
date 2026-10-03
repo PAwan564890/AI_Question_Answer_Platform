@@ -1,0 +1,121 @@
+# [CONFIGURED] Kubernetes manifests for the API tier.
+# Only parsed as YAML (no cluster was available for `kubectl --dry-run`); never applied.
+# The MVP does not need Kubernetes: Docker Compose is the supported way to run it.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ai-qa-config
+data:
+  APP_ENV: "prod"
+  LOG_LEVEL: "INFO"
+  QDRANT_URL: "http://qdrant:6333"
+  REDIS_URL: "redis://redis:6379/0"
+  TRUST_PROXY_HEADERS: "true"
+  LLM_PROVIDER: "mock"
+  EMBEDDING_PROVIDER: "hash"
+  EMBEDDING_DIM: "2048"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-qa-api
+  labels: {app: ai-qa-api}
+spec:
+  replicas: 3
+  selector:
+    matchLabels: {app: ai-qa-api}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxSurge: 1, maxUnavailable: 0}   # never drop below desired capacity
+  template:
+    metadata:
+      labels: {app: ai-qa-api}
+    spec:
+      terminationGracePeriodSeconds: 40   # > uvicorn's 30 s graceful shutdown
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+      containers:
+        - name: api
+          image: ai-qa-platform:1.0.0     # replace with your registry path
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef: {name: ai-qa-config}
+            - secretRef: {name: ai-qa-secrets}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          resources:
+            requests: {cpu: 250m, memory: 256Mi}
+            limits: {cpu: "1", memory: 512Mi}
+          # Liveness: restart the container only if the process itself is stuck.
+          livenessProbe:
+            httpGet: {path: /health/live, port: 8000}
+            periodSeconds: 10
+            failureThreshold: 3
+          # Readiness: take the pod out of the Service while Qdrant/Redis are unreachable.
+          readinessProbe:
+            httpGet: {path: /health/ready, port: 8000}
+            periodSeconds: 5
+            failureThreshold: 2
+          startupProbe:
+            httpGet: {path: /health/live, port: 8000}
+            periodSeconds: 2
+            failureThreshold: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-qa-api
+spec:
+  selector: {app: ai-qa-api}
+  ports:
+    - port: 80
+      targetPort: 8000
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ai-qa-api
+spec:
+  rules:
+    - host: api.example.com               # placeholder
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ai-qa-api
+                port: {number: 80}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ai-qa-api
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: ai-qa-api
+  minReplicas: 3
+  maxReplicas: 30
+  metrics:
+    # CPU is a weak signal for an I/O-bound LLM proxy (pods mostly wait on the
+    # provider). It is used here because it works without extra components; the
+    # better signal is in-flight requests per pod via a custom-metrics adapter.
+    - type: Resource
+      resource:
+        name: cpu
+        target: {type: Utilization, averageUtilization: 60}
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0       # react to spikes immediately
+      policies:
+        - {type: Percent, value: 100, periodSeconds: 30}
+    scaleDown:
+      stabilizationWindowSeconds: 300     # scale in slowly to avoid flapping
+      policies:
+        - {type: Pods, value: 2, periodSeconds: 60}

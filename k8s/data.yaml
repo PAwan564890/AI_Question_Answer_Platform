@@ -1,0 +1,96 @@
+# [CONFIGURED] In-cluster Qdrant and Redis for a test cluster, plus the init Job.
+# For production the recommendation is managed services (Qdrant Cloud or a
+# replicated Qdrant cluster, and ElastiCache for Redis) instead of these
+# single-replica workloads.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: qdrant
+spec:
+  serviceName: qdrant
+  replicas: 1
+  selector:
+    matchLabels: {app: qdrant}
+  template:
+    metadata:
+      labels: {app: qdrant}
+    spec:
+      containers:
+        - name: qdrant
+          image: qdrant/qdrant:v1.19.1
+          ports:
+            - containerPort: 6333
+          readinessProbe:
+            httpGet: {path: /readyz, port: 6333}
+          resources:
+            requests: {cpu: 250m, memory: 512Mi}
+            limits: {memory: 1Gi}
+          volumeMounts:
+            - {name: data, mountPath: /qdrant/storage}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests: {storage: 5Gi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qdrant
+spec:
+  selector: {app: qdrant}
+  ports:
+    - port: 6333
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: redis}
+  template:
+    metadata:
+      labels: {app: redis}
+    spec:
+      containers:
+        - name: redis
+          image: redis:7.4-alpine
+          args: ["--maxmemory", "256mb", "--maxmemory-policy", "volatile-lru"]
+          ports:
+            - containerPort: 6379
+          readinessProbe:
+            exec: {command: ["redis-cli", "ping"]}
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {memory: 320Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+spec:
+  selector: {app: redis}
+  ports:
+    - port: 6379
+---
+# Runs once per release: creates the collections and seeds the first ADMIN.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ai-qa-init
+spec:
+  backoffLimit: 5
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: init
+          image: ai-qa-platform:1.0.0
+          command: ["python", "-m", "app.database.seed"]
+          envFrom:
+            - configMapRef: {name: ai-qa-config}
+            - secretRef: {name: ai-qa-secrets}
