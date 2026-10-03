@@ -64,13 +64,14 @@ class DocumentRepository:
         )
         return [
             RetrievedChunk(
-                doc_id=p.payload["doc_id"],
-                title=p.payload["title"],
-                chunk_index=p.payload["chunk_index"],
-                text=p.payload["text"],
-                score=round(float(p.score), 4),
+                doc_id=payload["doc_id"],
+                title=payload["title"],
+                chunk_index=payload["chunk_index"],
+                text=payload["text"],
+                score=round(float(point.score), 4),
             )
-            for p in response.points
+            for point in response.points
+            if (payload := point.payload)
         ]
 
     async def list(self, limit: int, offset: int) -> list[DocumentInfo]:
@@ -86,14 +87,15 @@ class DocumentRepository:
         )
         return [
             DocumentInfo(
-                doc_id=p.payload["doc_id"],
-                title=p.payload["title"],
-                source=p.payload.get("source"),
-                chunk_count=p.payload["chunk_count"],
-                created_by=p.payload["created_by"],
-                created_at=datetime.fromisoformat(p.payload["created_at"]),
+                doc_id=payload["doc_id"],
+                title=payload["title"],
+                source=payload.get("source"),
+                chunk_count=payload["chunk_count"],
+                created_by=payload["created_by"],
+                created_at=datetime.fromisoformat(payload["created_at"]),
             )
-            for p in points[offset:]
+            for point in points[offset:]
+            if (payload := point.payload)
         ]
 
     async def delete(self, doc_id: str) -> bool:

@@ -23,6 +23,16 @@ async def list_users(
     return [UserOut.model_validate(u, from_attributes=True) for u in users]
 
 
+@router.get("/audit", summary="Audit trail of admin actions, newest first")
+async def list_audit_events(
+    container: ContainerDep,
+    _: AdminUser,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    offset: Annotated[int, Query(ge=0, le=1000)] = 0,
+) -> list[dict]:
+    return await container.audit.list(limit, offset)
+
+
 @router.post("/users", response_model=UserOut, status_code=201)
 async def create_user(payload: UserCreate, container: ContainerDep, admin: AdminUser) -> UserOut:
     user = await container.user_service.create(payload, admin)

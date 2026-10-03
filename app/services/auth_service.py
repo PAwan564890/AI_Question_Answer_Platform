@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import time
 
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
@@ -111,10 +112,12 @@ class UserService:
             fields["is_active"] = data.is_active
         if data.password is not None:
             fields["password_hash"] = await asyncio.to_thread(hash_password, data.password)
+            # Tokens issued before this moment stop working (see get_current_user).
+            fields["password_changed_ts"] = time.time()
         await self._users.update_fields(user_id, fields)
 
         # The audit trail records what changed, never the password or its hash.
-        changes = {k: v for k, v in fields.items() if k != "password_hash"}
+        changes = {k: v for k, v in fields.items() if not k.startswith("password_")}
         if data.password is not None:
             changes["password_changed"] = True
         await self._audit.add(actor.id, "user.update", user_id, changes)

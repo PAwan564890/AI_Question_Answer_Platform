@@ -34,6 +34,7 @@ class Container:
     redis: Redis
     users: UserRepository
     chats: ChatRepository
+    audit: AuditRepository
     embedder: Embedder
     knowledge_base: KnowledgeBase
     gateway: LLMGateway
@@ -43,7 +44,7 @@ class Container:
 
     async def aclose(self) -> None:
         for resource in (self.gateway.primary, self.gateway.fallback, self.embedder):
-            if hasattr(resource, "aclose"):
+            if resource is not None and hasattr(resource, "aclose"):
                 await resource.aclose()
         await self.redis.aclose()
         await self.qdrant.close()
@@ -95,7 +96,8 @@ def build_container(
 
     users = UserRepository(qdrant)
     chats = ChatRepository(qdrant)
-    knowledge_base = KnowledgeBase(settings, embedder, DocumentRepository(qdrant), redis)
+    audit = AuditRepository(qdrant)
+    knowledge_base = KnowledgeBase(settings, embedder, DocumentRepository(qdrant), redis, audit)
     gateway = LLMGateway(
         primary,
         fallback,
@@ -115,6 +117,7 @@ def build_container(
         redis=redis,
         users=users,
         chats=chats,
+        audit=audit,
         embedder=embedder,
         knowledge_base=knowledge_base,
         gateway=gateway,
@@ -123,7 +126,7 @@ def build_container(
             users,
             LoginThrottle(redis, settings.login_max_attempts, settings.login_lockout_seconds),
         ),
-        user_service=UserService(users, AuditRepository(qdrant), redis),
+        user_service=UserService(users, audit, redis),
         chat_service=ChatService(
             settings,
             gateway,

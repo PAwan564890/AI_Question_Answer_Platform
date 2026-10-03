@@ -58,6 +58,6 @@ async def search(payload: SearchRequest, container: ContainerDep, _: CurrentUser
 
 
 @router.delete("/{doc_id}", status_code=204, summary="Delete a document (ADMIN)")
-async def delete(doc_id: str, container: ContainerDep, _: AdminUser) -> Response:
-    await container.knowledge_base.delete(doc_id)
+async def delete(doc_id: str, container: ContainerDep, admin: AdminUser) -> Response:
+    await container.knowledge_base.delete(doc_id, admin)
     return Response(status_code=204)

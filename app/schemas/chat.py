@@ -60,4 +60,5 @@ class HistoryItem(BaseModel):
     latency_ms: int
     retries: int
     fallback_used: bool
+    sources: list[Source] = []
     created_at: datetime

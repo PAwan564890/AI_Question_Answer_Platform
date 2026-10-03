@@ -52,6 +52,10 @@ async def get_current_user(
     user = await container.users.get_by_id(str(claims["sub"]))
     if user is None or not user.is_active:
         raise AuthenticationError("The access token is no longer valid.", code="INVALID_TOKEN")
+    # A password change (for example after a suspected compromise) invalidates
+    # every token issued before it. ``iat`` has whole-second resolution.
+    if user.password_changed_ts and claims["iat"] < int(user.password_changed_ts):
+        raise AuthenticationError("The access token is no longer valid.", code="INVALID_TOKEN")
     request.state.user_id = user.id
     return user
 

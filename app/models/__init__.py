@@ -20,6 +20,7 @@ class User:
     is_active: bool
     created_at: datetime
     last_login_at: datetime | None = None
+    password_changed_ts: float | None = None  # tokens issued before this are rejected
 
 
 @dataclass(slots=True)

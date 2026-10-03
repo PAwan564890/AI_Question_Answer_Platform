@@ -68,3 +68,13 @@ class AuditRepository:
             AUDIT_EVENTS,
             points=[qm.PointStruct(id=str(uuid.uuid4()), vector={}, payload=payload)],
         )
+
+    async def list(self, limit: int, offset: int) -> list[dict]:
+        """Newest first."""
+        points, _ = await self._client.scroll(
+            AUDIT_EVENTS,
+            limit=limit + offset,
+            order_by=qm.OrderBy(key="created_ts", direction=qm.Direction.DESC),
+            with_payload=True,
+        )
+        return [{"id": str(p.id), **(p.payload or {})} for p in points[offset:]]

@@ -125,6 +125,7 @@ MATRIX = [
     ("GET", "/chat/history", None, {"admin1": 200, "alice": 200, "reader": 200}),
     ("GET", "/chat/history?user_id=all", None, {"admin1": 200, "alice": 403, "reader": 403}),
     ("GET", "/admin/users", None, {"admin1": 200, "alice": 403, "reader": 403}),
+    ("GET", "/admin/audit", None, {"admin1": 200, "alice": 403, "reader": 403}),
     (
         "POST",
         "/admin/users",
@@ -197,3 +198,57 @@ async def test_admin_cannot_lock_themselves_out(harness):
             f"/admin/users/{me['id']}", json=change, headers=admin
         )
         assert response.status_code == 422
+
+
+async def test_password_change_invalidates_existing_tokens(harness):
+    admin = await harness.auth("admin1")
+    alice_id = (await harness.users.get_by_username("alice")).id
+    # A correctly signed token for alice, issued a minute ago.
+    old_token = {"Authorization": "Bearer " + _token(sub=alice_id, iat=time.time() - 60)}
+    assert (await harness.client.get("/auth/me", headers=old_token)).status_code == 200
+
+    changed = await harness.client.patch(
+        f"/admin/users/{alice_id}", json={"password": "Brand-new-pass-99"}, headers=admin
+    )
+    assert changed.status_code == 200
+    assert (await harness.client.get("/auth/me", headers=old_token)).status_code == 401
+
+    fresh = await harness.client.post(
+        "/auth/login", json={"username": "alice", "password": "Brand-new-pass-99"}
+    )
+    assert fresh.status_code == 200
+    new_token = {"Authorization": f"Bearer {fresh.json()['access_token']}"}
+    assert (await harness.client.get("/auth/me", headers=new_token)).status_code == 200
+
+
+async def test_admin_actions_are_audited_without_secrets(harness):
+    admin = await harness.auth("admin1")
+    created = await harness.client.post(
+        "/admin/users", json={"username": "bob", "password": "Str0ng-enough-pw"}, headers=admin
+    )
+    await harness.client.patch(
+        f"/admin/users/{created.json()['id']}",
+        json={"password": "An0ther-strong-pw"},
+        headers=admin,
+    )
+    doc = await harness.client.post(
+        "/documents", json={"title": "T", "text": "Redis is a data store."}, headers=admin
+    )
+    await harness.client.delete(f"/documents/{doc.json()['doc_id']}", headers=admin)
+
+    audit = await harness.client.get("/admin/audit", headers=admin)
+    assert audit.status_code == 200
+    assert [e["action"] for e in audit.json()] == [
+        "document.delete",
+        "document.ingest",
+        "user.update",
+        "user.create",
+    ]
+    assert audit.json()[2]["changes"] == {"password_changed": True}
+    assert "An0ther-strong-pw" not in audit.text and "argon2" not in audit.text
+
+
+async def test_docs_can_be_disabled(build_harness):
+    harness = await build_harness(docs_enabled=False)
+    assert (await harness.client.get("/docs")).status_code == 404
+    assert (await harness.client.get("/openapi.json")).status_code == 404

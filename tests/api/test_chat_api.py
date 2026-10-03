@@ -33,7 +33,7 @@ async def test_chat_success_shape_and_persistence(harness):
 
     history = await harness.client.get("/chat/history", headers=await harness.auth("alice"))
     (row,) = history.json()
-    assert row["id"] == body["id"] and row["status"] == "ok"
+    assert row["id"] == body["id"] and row["status"] == "ok" and row["sources"] == []
     assert row["question"] == "What is Redis?" and row["usage"] == body["usage"]
 
 

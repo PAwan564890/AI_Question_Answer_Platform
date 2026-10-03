@@ -33,6 +33,7 @@ def _to_user(point: qm.Record) -> User:
         is_active=p["is_active"],
         created_at=datetime.fromisoformat(p["created_at"]),
         last_login_at=datetime.fromisoformat(last_login) if last_login else None,
+        password_changed_ts=p.get("password_changed_ts"),
     )
 
 

@@ -14,6 +14,7 @@ from redis.exceptions import RedisError
 from app.core.config import Settings
 from app.core.errors import InvalidRequestError, NotFoundError, ServiceUnavailableError
 from app.models import DocumentInfo, RetrievedChunk, User
+from app.repositories.chats import AuditRepository
 from app.repositories.documents import DocumentRepository
 from app.services.rag.embeddings import Embedder, EmbeddingError
 
@@ -54,12 +55,18 @@ def chunk_text(text: str, size: int, overlap: int) -> list[str]:
 
 class KnowledgeBase:
     def __init__(
-        self, settings: Settings, embedder: Embedder, documents: DocumentRepository, redis: Redis
+        self,
+        settings: Settings,
+        embedder: Embedder,
+        documents: DocumentRepository,
+        redis: Redis,
+        audit: AuditRepository,
     ) -> None:
         self._settings = settings
         self._embedder = embedder
         self._documents = documents
         self._redis = redis
+        self._audit = audit
 
     async def version(self) -> str:
         """Counter bumped on every ingest/delete; part of the response-cache key.
@@ -105,6 +112,10 @@ class KnowledgeBase:
             vectors=[v for _, v in kept],
         )
         await self._bump_version()
+        # The shared knowledge base shapes every user's answers, so changes are audited.
+        await self._audit.add(
+            actor.id, "document.ingest", info.doc_id, {"title": title, "chunks": info.chunk_count}
+        )
         logger.info("document_ingested", extra={"doc_id": info.doc_id, "chunks": info.chunk_count})
         return info
 
@@ -120,7 +131,8 @@ class KnowledgeBase:
     async def list(self, limit: int, offset: int) -> list[DocumentInfo]:
         return await self._documents.list(limit, offset)
 
-    async def delete(self, doc_id: str) -> None:
+    async def delete(self, doc_id: str, actor: User) -> None:
         if not await self._documents.delete(doc_id):
             raise NotFoundError("Document not found.")
         await self._bump_version()
+        await self._audit.add(actor.id, "document.delete", doc_id, {})

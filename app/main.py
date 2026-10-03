@@ -52,6 +52,9 @@ def create_app(settings: Settings | None = None, **overrides) -> FastAPI:
         version=settings.app_version,
         description="JWT-secured, rate-limited, observable Q&A API with RAG over Qdrant.",
         lifespan=lifespan,
+        docs_url="/docs" if settings.docs_enabled else None,
+        redoc_url=None,
+        openapi_url="/openapi.json" if settings.docs_enabled else None,
     )
     app.state.container = build_container(settings, **overrides)
 

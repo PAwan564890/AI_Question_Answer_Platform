@@ -95,7 +95,7 @@ class LLMGateway:
                 breaker_failure_threshold,
                 breaker_reset_seconds,
                 clock=clock,
-                on_state_change=lambda state, g=gauge: g.set(state),
+                on_state_change=gauge.set,
             )
 
     def _chain(self) -> list[LLMProvider]:
@@ -117,7 +117,10 @@ class LLMGateway:
                 if index > 0:
                     logger.warning(
                         "llm_fallback",
-                        extra={"provider": provider.name, "error_code": last_error.code},
+                        extra={
+                            "provider": provider.name,
+                            "error_code": last_error.code if last_error else None,
+                        },
                     )
                 try:
                     result, used = await self._call_with_retries(

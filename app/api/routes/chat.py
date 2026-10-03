@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Query
 from app.api.deps import ContainerDep, CurrentUser, require_role
 from app.core.errors import PermissionDeniedError
 from app.models import ChatRecord, Role, User
-from app.schemas.chat import ChatRequest, ChatResponse, HistoryItem, Usage
+from app.schemas.chat import ChatRequest, ChatResponse, HistoryItem, Source, Usage
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -40,6 +40,7 @@ def _to_item(record: ChatRecord) -> HistoryItem:
         latency_ms=record.latency_ms,
         retries=record.retries,
         fallback_used=record.fallback_used,
+        sources=[Source(**source) for source in record.sources],
         created_at=record.created_at,
     )
 

@@ -20,14 +20,15 @@ async def test_health_ok(harness):
     assert (await harness.client.get("/health/live")).json() == {"status": "ok"}
 
 
-async def test_redis_down_is_degraded_and_not_ready_but_live(harness):
+async def test_redis_down_is_degraded_but_still_ready_and_live(harness):
     harness.redis_server.connected = False
     health = await harness.client.get("/health")
     assert health.status_code == 200
     assert health.json()["status"] == "degraded" and health.json()["checks"]["redis"] == "fail"
 
     ready = await harness.client.get("/health/ready")
-    assert ready.status_code == 503 and ready.json()["checks"] == {
+    # Chat fails open without Redis, so the replica must stay in the load balancer.
+    assert ready.status_code == 200 and ready.json()["checks"] == {
         "database": "ok",
         "redis": "fail",
     }

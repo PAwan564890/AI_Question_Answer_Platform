@@ -3,7 +3,10 @@
 * ``/health/live``  - "is this process running?"  No dependency checks, so a
   database outage never makes the orchestrator restart healthy processes.
 * ``/health/ready`` - "should the load balancer send traffic here?"  503 unless
-  both Qdrant and Redis answer and the collections exist.
+  Qdrant answers and the collections exist. Redis is reported but does not
+  gate readiness: /chat is designed to keep working without Redis (fail open),
+  and a readiness probe that failed on Redis would make the load balancer
+  remove every replica at once and turn a degraded service into an outage.
 * ``/health``       - the human/dashboard view, including degraded states
   (for example Redis down: chat still works, without cache or shared limits).
 """
@@ -67,7 +70,7 @@ async def live() -> dict:
 @router.get("/health/ready", summary="Readiness probe")
 async def ready(container: ContainerDep) -> JSONResponse:
     database, redis = await asyncio.gather(_database_ok(container), _redis_ok(container))
-    is_ready = database and redis
+    is_ready = database
     return JSONResponse(
         status_code=200 if is_ready else 503,
         content={

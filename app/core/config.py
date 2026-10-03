@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     max_body_bytes: int = Field(default=300_000, ge=1_024)
     cors_allow_origins: str = ""  # comma-separated list; empty disables CORS
     trust_proxy_headers: bool = False  # true only behind our own nginx/ALB
+    docs_enabled: bool = True  # serve Swagger UI (/docs) and /openapi.json
 
     # --- authentication ----------------------------------------------------
     jwt_secret: str = DEV_JWT_SECRET

@@ -19,6 +19,7 @@ jobs:
         run: |
           ruff check .
           ruff format --check .
+          mypy app
       # The suite needs no services and no API key: Qdrant runs in-memory,
       # Redis is fakeredis, the LLM is the mock provider.
       - name: Tests
