@@ -1,0 +1,24 @@
+[PASS] GET /health is ok  ({"status": "ok", "checks": {"database": "ok", "redis": "ok", "llm": "mock", "embeddings": "hash"}, "version": "1.0.0"})
+[PASS] GET /health/live
+[PASS] POST /chat without token -> 401
+[PASS] GET /metrics without token -> 401
+[PASS] login as admin  (status 200)
+[PASS] admin creates USER account  (status 201)
+[PASS] admin creates READ_ONLY account  (status 201)
+[PASS] login as smoke_user_68e375  (status 200)
+[PASS] login as smoke_reader_68e375  (status 200)
+[PASS] USER on /admin/users -> 403
+[PASS] READ_ONLY on POST /chat -> 403
+[PASS] admin ingests a document into Qdrant  (status 201)
+[PASS] POST /chat answers via the LLM gateway  (status 200)
+[PASS] answer is grounded in the retrieved document (RAG)
+[PASS] token usage and latency are reported
+[PASS] identical question is served from the Redis cache
+[PASS] READ_ONLY can run a vector search
+[PASS] chat records were persisted in Qdrant
+[PASS] rate limit: 429 after 20 requests per window, across replicas  (18 more allowed after the 2 earlier calls, Retry-After=54)
+[PASS] GET /metrics (ADMIN) exposes Prometheus series
+[PASS] cleanup: document deleted
+
+Replicas that answered (X-Served-By): ['71c936ce9bc6', 'ba424bc7b195', 'ef39d21a6b67']
+RESULT: ALL CHECKS PASSED

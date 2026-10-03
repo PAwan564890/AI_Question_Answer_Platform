@@ -1,0 +1,15 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.10, pytest-9.1.1, pluggy-1.6.0 -- C:\Users\pawan kumar singh\.venvs\aiqa\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\pawan kumar singh\ai-qa-platform
+configfile: pyproject.toml
+testpaths: tests
+plugins: anyio-4.15.1, platformdirs-4.12.2, asyncio-1.4.0, cov-7.1.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 149 items / 146 deselected / 3 selected
+
+tests/integration/test_real_services.py::test_bootstrap_is_idempotent_and_users_roundtrip PASSED [ 33%]
+tests/integration/test_real_services.py::test_vector_search_on_real_qdrant PASSED [ 66%]
+tests/integration/test_real_services.py::test_rate_limiter_is_atomic_under_concurrency_on_real_redis PASSED [100%]
+
+===================== 3 passed, 146 deselected in 16.30s ======================

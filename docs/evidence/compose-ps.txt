@@ -1,0 +1,8 @@
+SERVICE   STATUS                    PORTS
+app       Up 28 seconds (healthy)   8000/tcp
+app       Up 28 seconds (healthy)   8000/tcp
+app       Up 28 seconds (healthy)   8000/tcp
+nginx     Up 22 seconds             0.0.0.0:8000->80/tcp, [::]:8000->80/tcp
+qdrant    Up 39 seconds (healthy)   127.0.0.1:6333->6333/tcp
+redis     Up 39 seconds (healthy)   127.0.0.1:6380->6379/tcp
+uid=10001(app) gid=10001(app) groups=10001(app)

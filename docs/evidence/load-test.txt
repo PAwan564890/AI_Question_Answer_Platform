@@ -1,0 +1,42 @@
+Load test evidence. Generated 2026-10-03 on: Intel Core i5-12500H (16 logical CPUs), 16 GB RAM,
+Windows 11, Docker Desktop 29.8.1 (WSL2 VM: 16 CPUs, 7.6 GB). LLM = MOCK provider.
+Load generator: scripts/load_test.py run in a container on the Compose network.
+CHAT_RATE_LIMIT was raised for these runs. Every question is unique (cache bypassed).
+This measures the gateway tier on one laptop with a mock LLM. It is not a production benchmark.
+
+### Run 1: MOCK_LATENCY_SECONDS=1, via nginx, 3 replicas (3 x LLM_MAX_CONCURRENCY=20 = 60 slots), 600 requests, concurrency 100
+requests=600 concurrency=100 duration=11.31s
+throughput=53.0 req/s
+status codes: {200: 600}
+latency ms: mean=1667.4 p50=1801.7 p95=2195.6 p99=2368.2 max=3113.9
+requests per replica: {'8ad70425be66': 198, '1ef2bdf32be4': 204, '743f6efa33e0': 198}
+nginx access log: n=600 status={'200': 600} request_time_s p50=1.606 p95=1.969 p99=2.032 max=2.732
+
+### Run 2: MOCK_LATENCY_SECONDS=1, ONE replica directly (20 slots), 300 requests, concurrency 100
+requests=300 concurrency=100 duration=15.66s
+throughput=19.2 req/s
+status codes: {200: 300}
+latency ms: mean=4478.8 p50=5008.9 p95=5370.3 p99=5543.9 max=5580.5
+requests per replica: {'8ad70425be66': 300}
+
+### Run 3: MOCK_LATENCY_SECONDS=1, ONE replica directly (20 slots, 5 s queue wait), 600 requests, concurrency 300 (load shedding expected)
+requests=600 concurrency=300 duration=16.01s
+throughput=37.5 req/s
+status codes: {200: 300, 503: 300}
+latency ms: mean=6470.0 p50=5969.5 p95=9706.0 p99=10385.9 max=10645.5
+requests per replica: {'8ad70425be66': 600}
+
+### Run 4: MOCK_LATENCY_SECONDS=0 (gateway overhead only), via nginx, 3 replicas, 3000 requests, concurrency 50
+requests=3000 concurrency=50 duration=25.32s
+throughput=118.5 req/s
+status codes: {200: 3000}
+latency ms: mean=419.4 p50=273.4 p95=1279.3 p99=1968.0 max=3698.8
+requests per replica: {'9f41334ca9bf': 1001, 'afe085ecc5cc': 1004, '1aa16ffdb04c': 995}
+nginx access log: n=3000 status={'200': 3000} request_time_s p50=0.025 p95=0.039 p99=0.117 max=0.312
+
+### Run 5: MOCK_LATENCY_SECONDS=0, ONE replica directly, 1500 requests, concurrency 50
+requests=1500 concurrency=50 duration=20.81s
+throughput=72.1 req/s
+status codes: {200: 1500}
+latency ms: mean=688.2 p50=638.2 p95=1214.8 p99=1609.2 max=2038.4
+requests per replica: {'1aa16ffdb04c': 1500}
