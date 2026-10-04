@@ -509,8 +509,7 @@ phase is in [docs/migration-plan.md](docs/migration-plan.md).
 
 * The body-size limit relies on `Content-Length` plus nginx `client_max_body_size`.
 
-* **The GitHub Actions workflow has not run on GitHub yet** because the repository has not been
-  pushed to GitHub.
+* The GitHub Actions workflow is configured, but it has not yet been verified by a completed GitHub Actions run. The same lint, type-check, test, audit, and image-build steps pass locally.
 
 * **The 500 RPS assessment scenario was not tested directly.** The scaling discussion is based on
   the measured local load test, concurrency limits, load shedding behavior, and the proposed
